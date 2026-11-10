@@ -126,7 +126,9 @@ function tarjetaPartido(p, cfg) {
       <div class="goles">${p.goles_local}–${p.goles_visitante}</div>
       <div class="equipo der">${fav("away")}${esc(p.visitante)}</div>
     </div>
-    ${s.ip_local !== undefined ? balanza(s.ip_local, s.ip_visitante, p.local, p.visitante) : `<p class="nota">Esperando el primer snapshot de estadísticas.</p>`}
+    ${s.ip_local != null ? balanza(s.ip_local, s.ip_visitante, p.local, p.visitante)
+      : p.sin_stats > 0 ? `<p class="nota">API-Football no entrega estadísticas en vivo para este partido (${p.sin_stats} de 2 intentos). Sin estadísticas no hay dominancia y la regla no puede alertar; tras 2 intentos deja de gastar consultas en él.</p>`
+      : `<p class="nota">Esperando el primer snapshot de estadísticas.</p>`}
     <div class="metricas">
       <div class="metrica ${cls(ev.dominancia)}"><span>Dominancia</span><b>${n(s.dominancia)}</b></div>
       <div class="metrica ${cls(ev.momentum)}"><span>Momentum</span><b>${n(s.momentum)}</b></div>
@@ -191,7 +193,8 @@ const pantallas = {
     pintarEncabezado(r);
     const u = r.ultimo_escaneo;
     const estado = u
-      ? `Último radar ${hace(u.ts)}: ${u.partidos_vivos ?? 0} partidos en vivo, ${u.candidatos ?? 0} candidatos`
+      ? `Último radar ${hace(u.ts)}: ${u.partidos_vivos ?? 0} partidos en vivo, ${u.candidatos ?? 0} candidatos` +
+        (r.ultimo_seguimiento && new Date(r.ultimo_seguimiento.ts) > new Date(u.ts) ? `. Último seguimiento de candidatos ${hace(r.ultimo_seguimiento.ts)}` : "")
       : "Aún no se ha hecho ningún radar";
     const horas = r.horas_activas_utc || [];
     const enHorario = horas.includes(new Date().getUTCHours());
@@ -202,7 +205,7 @@ const pantallas = {
            ${enHorario ? "El radar sigue buscando." : `El radar está fuera de su horario activo (${esc(resumirHoras(horas))}); se reanuda solo.`}</div>`;
     return `<div class="titulo-seccion"><h2>Candidatos en seguimiento</h2><small>${r.en_vivo.length}</small></div>
       ${lista}
-      <p class="nota">${esc(estado)}. Con el plan gratuito el radar pasa cada 15 a 20 minutos, no minuto a minuto.</p>`;
+      <p class="nota">${esc(estado)}. Con el plan gratuito el radar busca partidos nuevos cada 15 a 35 minutos; los candidatos se actualizan cada ${esc(r.intervalo_seguimiento_min ?? 5)} minutos.</p>`;
   },
 
   async radar() {

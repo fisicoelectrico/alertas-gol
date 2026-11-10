@@ -79,7 +79,7 @@ async function resumen() {
   const cfg = await leerConfig();
   const enVivo = await sql`
     select p.fixture_id, p.local, p.visitante, p.estado, p.minuto, p.goles_local, p.goles_visitante,
-           p.favorito, p.cuota_pre_local, p.cuota_pre_visitante, p.seguimiento, l.nombre as liga, l.pais,
+           p.favorito, p.cuota_pre_local, p.cuota_pre_visitante, p.seguimiento, p.sin_stats, l.nombre as liga, l.pais,
            (select json_agg(s order by s.minuto) from (
               select minuto, ip_local, ip_visitante, dominancia, momentum, cuota_over, linea_over, evaluacion
               from futbol.snapshots where fixture_id = p.fixture_id order by ts desc limit 12) s) as serie,
@@ -90,9 +90,12 @@ async function resumen() {
        or exists (select 1 from futbol.alertas a where a.fixture_id = p.fixture_id and a.resultado = 'pendiente')
     order by p.minuto desc nulls last`;
   const [ultimo] = await sql`select ts, motivo, partidos_vivos, candidatos, llamadas, alertas, resueltas, detalle
-                             from futbol.escaneos order by ts desc limit 1`;
+                             from futbol.escaneos where motivo <> 'seguimiento' order by ts desc limit 1`;
+  const [ultimoSeg] = await sql`select ts, candidatos, llamadas, alertas, detalle
+                                from futbol.escaneos where motivo = 'seguimiento' order by ts desc limit 1`;
   return {
-    en_vivo: enVivo, ultimo_escaneo: ultimo ?? null,
+    en_vivo: enVivo, ultimo_escaneo: ultimo ?? null, ultimo_seguimiento: ultimoSeg ?? null,
+    intervalo_seguimiento_min: cfg.intervalo_seguimiento_min,
     presupuesto: await estadoPresupuesto(cfg), presupuesto_diario: cfg.presupuesto_diario,
     regla_version: cfg.regla_version, escaneo_activo: cfg.escaneo_activo,
     horas_activas_utc: cfg.horas_activas_utc, cuota_objetivo: cfg.cuota_objetivo, dominancia_min: cfg.dominancia_min,
