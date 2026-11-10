@@ -2,13 +2,13 @@
 
 ## 1. Abrir la app
 - Dirección temporal: `https://fisicoelectrico.github.io/alertas-gol/`
-- Dirección final (tras el paso 2): `https://goles.freddyquiroga.com`
+- Dirección final (tras el paso 2): `https://goles.fredyquiroga.com`
 
-## 2. Subdominio `goles.freddyquiroga.com`
-1. En el panel DNS del dominio (Cloudflare o donde esté `freddyquiroga.com`) crea un registro:
+## 2. Subdominio `goles.fredyquiroga.com`
+1. En el panel DNS del dominio (Cloudflare o donde esté `fredyquiroga.com`) crea un registro:
    - Tipo `CNAME`, nombre `goles`, destino `fisicoelectrico.github.io`
    - En Cloudflare déjalo en **"DNS only" (nube gris)**; con el proxy naranja GitHub no puede emitir el certificado HTTPS.
-2. En GitHub: repo `alertas-gol` → Settings → Pages → **Custom domain** → escribe `goles.freddyquiroga.com` → Save.
+2. En GitHub: repo `alertas-gol` → Settings → Pages → **Custom domain** → escribe `goles.fredyquiroga.com` → Save.
 3. Espera a que diga "DNS check successful" y marca **Enforce HTTPS** (puede tardar unos minutos).
 
 Importante: las notificaciones quedan atadas a la dirección desde la que se activan. Si activas en la dirección temporal y luego cambias al subdominio, hay que volver a instalar y activar. Lo ideal es hacer primero el DNS.

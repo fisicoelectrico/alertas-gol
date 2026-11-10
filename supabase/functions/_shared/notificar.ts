@@ -6,7 +6,7 @@ export function vapid(): Vapid | null {
   const publicKey = Deno.env.get("VAPID_PUBLIC")?.trim();
   const privateKey = Deno.env.get("VAPID_PRIVATE")?.trim();
   if (!publicKey || !privateKey) return null;
-  return { publicKey, privateKey, subject: Deno.env.get("VAPID_SUBJECT") ?? "https://goles.freddyquiroga.com" };
+  return { publicKey, privateKey, subject: Deno.env.get("VAPID_SUBJECT") ?? "https://goles.fredyquiroga.com" };
 }
 
 export async function notificarTodos(mensaje: Record<string, unknown>): Promise<number> {

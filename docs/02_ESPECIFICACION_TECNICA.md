@@ -18,7 +18,7 @@ Cuando un **favorito** (según la cuota prepartido) va **perdiendo por ≥1 gol 
 | Escaneo | Edge Function `escaner`, disparada por **pg_cron + pg_net** | Funciona 24/7 sin necesidad de tener la app abierta. |
 | Notificaciones | **Web Push** (VAPID) desde la Edge Function | Llegan aunque el celular esté bloqueado, una vez instalada la PWA. |
 | Frontend | PWA estática (HTML/JS + service worker + manifest) | Se instala como app desde el navegador. |
-| Hosting | GitHub Pages o Cloudflare Pages + subdominio **`goles.freddyquiroga.com`** (CNAME) | Gratis, con HTTPS (requisito para la PWA). Dominio alterno: fisicoeléctrico.com. |
+| Hosting | GitHub Pages o Cloudflare Pages + subdominio **`goles.fredyquiroga.com`** (CNAME) | Gratis, con HTTPS (requisito para la PWA). Dominio alterno: fisicoeléctrico.com. |
 | Plan de pago | Se queda en Free hasta que los datos demuestren ganancia; el diseño escala a Pro cambiando solo `config.presupuesto_diario` | Decisión de Fredy. |
 
 ## 3. Limitación clave: 100 consultas/día
