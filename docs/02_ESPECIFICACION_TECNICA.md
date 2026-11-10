@@ -1,5 +1,5 @@
 # Especificación técnica — Alertas de Gol en Vivo
-*Versión 1.2 (propuesta) · 10 nov 2026 · Estado: construida y en operación; pendiente de aprobación de Fredy*
+*Versión 1.2 · 10 nov 2026 · Estado: construida y en operación; aprobada por Fredy el 10 nov 2026*
 
 > Los cambios respecto a la 1.0 están listados en la sección 9. El resto del texto se conserva tal cual.
 
@@ -103,7 +103,7 @@ Cada punto reemplaza o precisa lo dicho arriba. El porqué detallado está en `D
 11. **Pendiente (a) de la sec. 3:** se confirma que no hay "ataques peligrosos"; el IP usa solo las estadísticas listadas. **Pendiente (b):** el parser de `/odds/live` acepta "Over/Under Line" y "Match Goals" con la línea en `handicap`; falta confirmarlo con la primera respuesta real (queda guardada en `snapshots.raw`).
 12. **Pantalla Radar (sec. 6) y columna `escaneos.radar` (sec. 5):** nueva pestaña con el número de partidos en vivo que entrega API-Football en cada radar, su evolución en 24 h, la lista por liga con el motivo de descarte de cada partido y una tabla de ligas con huecos de cobertura. Se alimenta de la respuesta que el radar ya pide (cero consultas extra). La foto por partido se conserva 7 días.
 
-## 10. Cambios de la versión 1.2 (propuestos, 10 nov 2026)
+## 10. Cambios de la versión 1.2 (aprobados por Fredy, 10 nov 2026)
 1. **Agenda (sec. 3, reemplaza el punto 5 de la sec. 9):** dos relojes. Radar (`/fixtures?live=all`) con el intervalo del reparto del presupuesto; seguimiento de candidatos cada `intervalo_seguimiento_min` (5 min) con `/fixtures?id=X` (marcador + estadísticas en 1 consulta por partido; el lote `?ids=` no está en el plan Free) + `/odds/live` por candidato. El seguimiento tiene prioridad; el radar se espacia solo cuando el seguimiento consume.
 2. **Contabilidad (sec. 3):** un candidato cuesta ~2 consultas cada 5 min (~18 en su vida útil). En Free alcanza para 1 o 2 candidatos al día sin dejar al radar sin cuota.
 3. **Cobertura (sec. 3):** un partido con 2 respuestas seguidas sin estadísticas sale del seguimiento (`partidos.sin_stats`). Primer caso real: Reserve League de Argentina, sin estadísticas ni cuota en vivo en API-Football (verificado el 10 nov).
