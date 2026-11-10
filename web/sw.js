@@ -5,7 +5,7 @@
 //  2) Guardar el cascarón de la app (HTML/CSS/JS) para que abra al instante y sin red.
 // Los DATOS nunca se guardan en caché: siempre se piden frescos a la API.
 // =====================================================================
-const VERSION = "v2";
+const VERSION = "v3";
 const CACHE = `alertas-gol-${VERSION}`;
 const CASCARON = ["./", "index.html", "styles.css", "app.js", "config.js", "manifest.webmanifest", "icons/icon-192.png"];
 

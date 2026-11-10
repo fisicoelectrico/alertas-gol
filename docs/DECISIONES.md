@@ -44,6 +44,16 @@ Cubre Europa por la mañana y América por la tarde y noche. Fuera de ese horari
 
 **16. Cada cambio de parámetro de regla crea `v2`, `v3`… automáticamente** y pide una nota. Una alerta por partido y versión (restricción única en la tabla).
 
+## Pestaña Radar (10 nov 2026, a pedido de Fredy)
+**17. El conteo de partidos en vivo sale del mismo radar, sin consultas nuevas.**
+Cada barrido ya trae `/fixtures?live=all` completo. Ahora el escáner guarda una foto compacta de esa lista en `futbol.escaneos.radar` (una fila por partido: liga, equipos, minuto, marcador y motivo). La PWA la lee por `GET /api/radar`. Costo en cuota: cero. Costo en BD: ~150 bytes por partido; la foto se borra (se pone en null) a los 7 días y el conteo `partidos_vivos` queda para siempre.
+
+**18. Cada partido cae en un solo motivo: el primer filtro del embudo que no pasa** (`motivoRadar` en `algoritmo.ts`). Se agrupan en cuatro familias: *cobertura* (la API no trae cuota prepartido, estadísticas o cuota en vivo), *aislada por ti*, *regla* (aún no es 2T, empatado, fuera de la ventana, sin favorito claro…) y *en seguimiento*. La cobertura va primero porque es lo que ningún ajuste de la regla recupera.
+
+**19. La cobertura de una liga solo se descubre cuando uno de sus partidos se vuelve precandidato.** Averiguarla para todos (con `/leagues` o `/odds` por partido) gastaría cuota. Consecuencia: una liga sin cuotas aparece como "empatado" o "aún no es 2T" hasta que alguien pierde en el entretiempo o el 2T. Si más adelante hace falta saberlo antes, la opción barata es una consulta diaria a `/odds?date=` o `/leagues?current=true` que trae la cobertura de todas las ligas de una vez.
+
+**20. El número es una foto, no un contador en tiempo real.** Con el plan Free hay un radar cada 15 a 20 min. Para comparar con otra página hay que mirarla cerca de la hora que muestra la pestaña.
+
 ## Límites que hay que tener presentes
 - **No es minuto a minuto.** Con un radar cada 10 a 20 min, la cuota puede cruzar 1,40 y un gol caer entre dos radares. La cuota registrada es la del momento del radar, no la del cruce.
 - **Cobertura parcial de cuotas en vivo.** API-Football no trae `/odds/live` para todas las ligas; esos partidos nunca alertan (quedan con cuota vacía en el snapshot).

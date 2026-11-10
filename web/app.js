@@ -137,6 +137,53 @@ function tarjetaPartido(p, cfg) {
   </article>`;
 }
 
+// ---------- radar: motivos de descarte ----------
+// Cada partido en vivo cae en un solo motivo (el primer filtro que no pasa, ver motivoRadar en
+// algoritmo.ts). Aquí se agrupan en 4 familias para leerlos de un vistazo.
+const GRUPOS = {
+  seguimiento: { corto: "Seguimiento", titulo: "En seguimiento", ayuda: "Pasaron el filtro: el escáner les pide estadísticas y evalúa la regla." },
+  cobertura: { corto: "Sin datos API", titulo: "Por fuera: la API no trae el dato", ayuda: "Huecos de API-Football en esa liga. Ningún ajuste de la regla los recupera." },
+  aislada: { corto: "Aisladas", titulo: "Por fuera: liga aislada por ti", ayuda: "Las apagaste en la pestaña Ligas." },
+  regla: { corto: "Regla", titulo: "Descartados por la regla", ayuda: "Partidos normales que todavía no cumplen (o ya no cumplen) el patrón." },
+};
+function motivoInfo(mo, r) {
+  const M = {
+    evaluado: ["seguimiento", "Evaluado en este radar"],
+    sin_cupo: ["seguimiento", "Candidato sin cupo de detalle en este radar"],
+    ya_alertado: ["seguimiento", "Ya alertado (esperando resultado)"],
+    sin_cuota_pre: ["cobertura", "Sin cuotas prepartido en la API"],
+    sin_estadisticas: ["cobertura", "Sin estadísticas en vivo en la API"],
+    sin_cuota_vivo: ["cobertura", "Sin cuota en vivo en la API"],
+    aislada: ["aislada", "Liga aislada"],
+    aun_no_2T: ["regla", "Aún no es el 2.º tiempo"],
+    otro_estado: ["regla", "Prórroga, penales o pausa"],
+    fuera_ventana: ["regla", `Fuera de la ventana ${r.minuto_min ?? 46}'–${r.minuto_max ?? 85}'`],
+    empatado: ["regla", "Empatado"],
+    favorito_no_pierde: ["regla", Number(r.diferencia_min) > 1 ? `El favorito no pierde por ${r.diferencia_min} o más` : "El favorito no va perdiendo"],
+    sin_favorito_claro: ["regla", `Sin favorito claro (cuota > ${n(r.cuota_fav_max)})`],
+    sin_consultar: ["regla", "Favorito aún sin consultar (cupo de API)"],
+  };
+  const [grupo, texto] = M[mo] || ["regla", mo || "–"];
+  return { grupo, texto };
+}
+const ESTADOS = { "1H": "1T", HT: "Descanso", "2H": "2T", ET: "Prórroga", BT: "Pausa", P: "Penales", SUSP: "Susp.", INT: "Interr.", LIVE: "Vivo" };
+
+// Barras de partidos en vivo por radar en las últimas 24 h
+function barrasVivos(hist) {
+  const pts = (hist || []).map((h) => ({ t: new Date(h.ts).getTime(), v: Number(h.vivos) || 0 }));
+  if (pts.length < 2) return "";
+  const W = 300, H = 48, t1 = Date.now(), t0 = t1 - 24 * 3600e3, vMax = Math.max(...pts.map((p) => p.v), 1);
+  const X = (t) => ((t - t0) / (t1 - t0)) * W;
+  const barras = pts.map((p) => {
+    const h = Math.max(1.5, (p.v / vMax) * (H - 4));
+    return `<rect x="${X(p.t).toFixed(1)}" y="${(H - h).toFixed(1)}" width="2.2" height="${h.toFixed(1)}" rx="1"/>`;
+  }).join("");
+  return `<svg class="barras" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Partidos en vivo por radar, últimas 24 horas (máximo ${vMax})">${barras}</svg>
+    <div class="spark-pie"><span>hace 24 h</span><span>máx. ${vMax} en un radar</span><span>ahora</span></div>`;
+}
+
+let filtroRadar = localStorage.getItem("filtroRadar") || "todos";
+
 // ---------- pantallas ----------
 const pantallas = {
   async vivo() {
@@ -156,6 +203,70 @@ const pantallas = {
     return `<div class="titulo-seccion"><h2>Candidatos en seguimiento</h2><small>${r.en_vivo.length}</small></div>
       ${lista}
       <p class="nota">${esc(estado)}. Con el plan gratuito el radar pasa cada 15 a 20 minutos, no minuto a minuto.</p>`;
+  },
+
+  async radar() {
+    const r = await get("/radar");
+    const u = r.ultimo;
+    if (!u) return `<div class="tarjeta vacio"><strong>Sin foto del radar todavía</strong>
+      La lista aparece después del próximo barrido del escáner (${esc(resumirHoras(r.horas_activas_utc))}).</div>`;
+    const items = (u.radar || []).map((p) => ({ ...p, ...motivoInfo(p.mo, r) }));
+    const cuenta = (g) => items.filter((p) => p.grupo === g).length;
+    const porEstado = {};
+    items.forEach((p) => { const k = ESTADOS[p.e] || p.e; porEstado[k] = (porEstado[k] || 0) + 1; });
+
+    setTimeout(() => document.querySelectorAll(".filtro").forEach((b) => b.addEventListener("click", () => {
+      filtroRadar = b.dataset.g;
+      try { localStorage.setItem("filtroRadar", filtroRadar); } catch (_) {}
+      navegar(true);
+    })));
+
+    const visibles = items.filter((p) => filtroRadar === "todos" || p.grupo === filtroRadar);
+    // Agrupar por liga, conservando el orden: ligas con más partidos primero
+    const ligas = new Map();
+    for (const p of visibles) {
+      if (!ligas.has(p.lg)) ligas.set(p.lg, { liga: p.liga, pais: p.pais, ps: [] });
+      ligas.get(p.lg).ps.push(p);
+    }
+    const ordenLigas = [...ligas.values()].sort((a, b) => b.ps.length - a.ps.length || a.liga.localeCompare(b.liga));
+    const evTexto = (ev) => !ev ? "" : ` · D ${n(ev.d)} · M ${n(ev.mo)}${ev.c ? ` · Over @ ${n(ev.c)}` : ""}`;
+    const fila = (p) => `<div class="rfila">
+        <span class="rmin num">${esc(ESTADOS[p.e] || p.e)}${p.e === "1H" || p.e === "2H" ? ` ${p.m ?? ""}'` : ""}</span>
+        <span class="requipos">${esc(p.l)}${p.fav === "home" ? '<span class="fav">FAV</span>' : ""} <b class="num">${p.gl}–${p.gv}</b> ${p.fav === "away" ? '<span class="fav">FAV</span>' : ""}${esc(p.v)}
+          <small class="motivo ${p.grupo}">${esc(p.texto)}${p.cf ? ` · fav @ ${n(p.cf)}` : ""}${evTexto(p.ev)}</small></span>
+      </div>`;
+    const filtros = [["todos", "Todos", items.length], ...Object.keys(GRUPOS).map((g) => [g, GRUPOS[g].corto, cuenta(g)])];
+
+    const conHuecos = r.ligas.filter((l) => l.sin_cuota_pre + l.sin_estadisticas + l.sin_cuota_vivo > 0);
+    return `<div class="tarjeta contador">
+        <div class="fila"><div><b class="num grande">${u.partidos_vivos ?? items.length}</b><span> partidos en vivo</span></div>
+          <span class="chip">${hora(u.ts)}</span></div>
+        <p class="nota" style="margin-top:2px">Según API-Football en el radar de ${hace(u.ts)}${u.motivo !== "ok" ? ` (terminó con ${esc(u.motivo)})` : ""}. Para comparar con otra página, mira el conteo a esa misma hora.</p>
+        <div class="estados">${Object.entries(porEstado).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join("")}</div>
+        ${barrasVivos(r.historial)}
+      </div>
+
+      <div class="embudo">
+        ${Object.entries(GRUPOS).map(([g, x]) => `<div class="paso ${g}"><b class="num">${cuenta(g)}</b><span>${esc(x.titulo)}</span></div>`).join("")}
+      </div>
+
+      <div class="filtros" role="group" aria-label="Filtrar partidos">
+        ${filtros.map(([g, t, c]) => `<button type="button" class="filtro ${filtroRadar === g ? "on" : ""}" data-g="${g}" aria-pressed="${filtroRadar === g}">${esc(t)} <span class="num">${c}</span></button>`).join("")}
+      </div>
+      ${filtroRadar !== "todos" ? `<p class="nota" style="margin:0 0 10px">${esc(GRUPOS[filtroRadar].ayuda)}</p>` : ""}
+      ${ordenLigas.map((l) => `<div class="tarjeta rliga">
+          <div class="liga"><span><b>${esc(l.liga)}</b> · ${esc(l.pais || "")}</span><span>${l.ps.length}</span></div>
+          ${l.ps.map(fila).join("")}
+        </div>`).join("") || `<div class="tarjeta vacio">Ningún partido en este grupo.</div>`}
+
+      <div class="titulo-seccion"><h2>Ligas en las últimas 24 h</h2><small>${r.ligas.length} ligas · ${conHuecos.length} con huecos</small></div>
+      <div class="tarjeta tabla-wrap"><table><thead><tr><th>Liga</th><th title="Partidos distintos vistos">Part.</th><th title="Llegaron a candidato">Cand.</th><th title="Sin cuotas prepartido / sin estadísticas / sin cuota en vivo">Huecos API</th></tr></thead><tbody>
+        ${r.ligas.map((l) => {
+          const h = [l.sin_cuota_pre && `${l.sin_cuota_pre} sin cuota pre`, l.sin_estadisticas && `${l.sin_estadisticas} sin stats`, l.sin_cuota_vivo && `${l.sin_cuota_vivo} sin cuota vivo`].filter(Boolean).join(", ");
+          return `<tr><td>${esc(l.liga)}<small class="sub">${esc(l.pais || "")}${l.aislada ? " · aislada" : ""}</small></td><td>${l.partidos}</td><td>${l.candidatos}</td><td class="${h ? "neg" : ""}">${esc(h || "–")}</td></tr>`;
+        }).join("") || `<tr><td colspan="4">Sin datos aún</td></tr>`}
+      </tbody></table></div>
+      <p class="nota">Este conteo no gasta consultas: es la misma respuesta que el escáner ya pide en cada barrido. La cobertura de una liga solo se descubre cuando uno de sus partidos se vuelve precandidato (alguien pierde en el entretiempo o el 2.º tiempo), porque averiguarla para todos costaría una consulta por partido.</p>`;
   },
 
   async alertas() {
@@ -422,7 +533,7 @@ addEventListener("hashchange", () => navegar());
 // Refresco automático solo en pantallas de lectura y con la app visible (no gasta batería en segundo plano)
 setInterval(() => {
   const tab = location.hash.replace("#", "") || "vivo";
-  if (!document.hidden && (tab === "vivo" || tab === "alertas")) navegar(true);
+  if (!document.hidden && (tab === "vivo" || tab === "radar" || tab === "alertas")) navegar(true);
 }, REFRESCO_MS);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) navegar(true); });
 

@@ -10,7 +10,7 @@
 //   3. Favoritos:  GET /odds?fixture=X&bet=1         (1 por partido, una sola vez en la vida)
 //   4. Detalle:    GET /fixtures/statistics + /odds/live para los candidatos
 //   5. Regla:      IP, dominancia, momentum, cuota → snapshot → alerta + push
-//   6. Bitácora:   futbol.escaneos
+//   6. Bitácora:   futbol.escaneos (+ columna `radar`: cada partido en vivo con su motivo de descarte)
 // =====================================================================
 import { sql, leerConfig, Config } from "../_shared/db.ts";
 import { ApiFootball, estadoPresupuesto, SinPresupuesto } from "../_shared/apifootball.ts";
@@ -59,10 +59,15 @@ Deno.serve(async (req) => {
   if (!key) return json({ error: "falta el secreto APIFOOTBALL_KEY" }, 500);
 
   const bitacora = async (motivo: string, extra: Record<string, any> = {}) => {
-    await sql`insert into futbol.escaneos (motivo, partidos_vivos, candidatos, llamadas, alertas, resueltas, duracion_ms, detalle)
+    await sql`insert into futbol.escaneos (motivo, partidos_vivos, candidatos, llamadas, alertas, resueltas, duracion_ms, detalle, radar)
       values (${motivo}, ${extra.vivos ?? null}, ${extra.candidatos ?? null}, ${extra.llamadas ?? 0},
-              ${extra.alertas ?? 0}, ${extra.resueltas ?? 0}, ${Date.now() - t0}, ${sql.json((extra.detalle ?? {}) as any)})`;
-    return json({ motivo, ...extra });
+              ${extra.alertas ?? 0}, ${extra.resueltas ?? 0}, ${Date.now() - t0}, ${sql.json((extra.detalle ?? {}) as any)},
+              ${extra.radar ? sql.json(extra.radar) : null})`;
+    // La foto del radar solo se guarda 7 días (pesa ~150 bytes por partido). El conteo
+    // `partidos_vivos` queda para siempre; los partidos en sí ya viven en futbol.partidos.
+    await sql`update futbol.escaneos set radar = null where radar is not null and ts < now() - interval '7 days'`;
+    const { radar: _r, ...resto } = extra;
+    return json({ motivo, ...resto, radar_partidos: extra.radar?.length ?? 0 });
   };
 
   // ---------- 0. Guardas ----------
@@ -108,11 +113,47 @@ Deno.serve(async (req) => {
   const detalle: Record<string, unknown> = { intervalo_min: intervalo, regla: regla.version, eventos: [] as string[] };
   const log = (s: string) => (detalle.eventos as string[]).push(s);
   let alertasNuevas = 0, resueltas = 0, candidatosN = 0, vivos = 0;
+  // Datos para la foto del radar (se llenan a medida que avanza el escaneo)
+  let lista: any[] = [];
+  const info = new Map<number, any>();
+  const favs = new Map<number, any>();
+  const yaAlertados = new Set<number>();
+  const resultadoDetalle = new Map<number, A.MotivoRadar>();
+  const evaluaciones = new Map<number, Record<string, unknown>>();
+
+  // Una fila compacta por partido en vivo: qué es y en qué filtro se quedó. Cero consultas extra.
+  const fotoRadar = () => {
+    try {
+      return lista.map((f) => {
+        const id = f.fixture.id;
+        const i = info.get(id), p = favs.get(id);
+        const favorito = p?.favorito ?? null;
+        const cuotaFav = favorito === "home" ? Number(p.cuota_pre_local) : favorito === "away" ? Number(p.cuota_pre_visitante) : null;
+        const motivo = A.motivoRadar({
+          estado: f.fixture.status.short, minuto: f.fixture.status.elapsed ?? 0,
+          gl: f.goals.home ?? 0, gv: f.goals.away ?? 0,
+          habilitada: i?.habilitada ?? true, consultada: !!(p?.cuota_pre_consultada ?? i?.cuota_pre_consultada),
+          favorito, cuotaFav: Number.isFinite(cuotaFav) ? cuotaFav : null,
+          yaAlertado: yaAlertados.has(id), detalle: (resultadoDetalle.get(id) ?? null) as any,
+        }, regla);
+        return {
+          id, lg: f.league.id, liga: f.league.name, pais: f.league.country,
+          l: f.teams.home.name, v: f.teams.away.name, e: f.fixture.status.short, m: f.fixture.status.elapsed ?? null,
+          gl: f.goals.home ?? 0, gv: f.goals.away ?? 0, fav: favorito,
+          cf: Number.isFinite(cuotaFav) ? cuotaFav : null, mo: motivo,
+          ...(evaluaciones.has(id) ? { ev: evaluaciones.get(id) } : {}),
+        };
+      });
+    } catch (e) {
+      (detalle.eventos as string[]).push(`foto radar: ${(e as Error).message}`);
+      return null;
+    }
+  };
 
   try {
     // ---------- 1. Radar ----------
     const radar = await api.get("/fixtures", { live: "all" });
-    const lista: any[] = radar.response ?? [];
+    lista = radar.response ?? [];
     vivos = lista.length;
     const porId = new Map<number, any>(lista.map((f) => [f.fixture.id, f]));
     const idsVivos = [...porId.keys()];
@@ -182,7 +223,6 @@ Deno.serve(async (req) => {
               where seguimiento and not (fixture_id = any(${idsVivos}::int[]))`;
 
     // ---------- 3. Favoritos (cuota prepartido, una sola vez por partido) ----------
-    const info = new Map<number, any>();
     if (lista.length) {
       const filas = await sql`
         select p.fixture_id, p.favorito, p.cuota_pre_consultada, coalesce(l.habilitada, true) as habilitada
@@ -221,15 +261,15 @@ Deno.serve(async (req) => {
     }
 
     // Releer favoritos y cuotas (incluye los que se acaban de consultar)
-    const favs = new Map<number, any>();
     if (lista.length) {
-      for (const p of await sql`select fixture_id, favorito, cuota_pre_local, cuota_pre_visitante
+      for (const p of await sql`select fixture_id, favorito, cuota_pre_local, cuota_pre_visitante, cuota_pre_consultada
                                 from futbol.partidos where fixture_id = any(${idsVivos}::int[])`) favs.set(p.fixture_id, p);
     }
 
     // ---------- 4. Candidatos ----------
-    const yaAlertados = new Set<number>((await sql`
-      select fixture_id from futbol.alertas where regla_version = ${regla.version}`).map((r: any) => r.fixture_id));
+    for (const r of await sql`select fixture_id from futbol.alertas where regla_version = ${regla.version}`) {
+      yaAlertados.add(r.fixture_id);
+    }
     const candidatos = lista.filter((f) => {
       const p = favs.get(f.fixture.id);
       const i = info.get(f.fixture.id);
@@ -259,7 +299,7 @@ Deno.serve(async (req) => {
 
       const rStats = await api.get("/fixtures/statistics", { fixture: id });
       const equipos: any[] = rStats.response ?? [];
-      if (equipos.length < 2) { log(`sin estadísticas ${id}`); continue; }
+      if (equipos.length < 2) { log(`sin estadísticas ${id}`); resultadoDetalle.set(id, "sin_estadisticas"); continue; }
       const eLocal = equipos.find((e) => e.team?.id === f.teams.home.id) ?? equipos[0];
       const eVisit = equipos.find((e) => e.team?.id === f.teams.away.id) ?? equipos[1];
       const sL = A.normalizarStats(eLocal?.statistics);
@@ -306,6 +346,9 @@ Deno.serve(async (req) => {
           ${sql.json({ ...ev.condiciones, mercado: cuotaOver.mercado, lineas: cuotaOver.lineas, usar_xg: usarXg } as any)},
           ${sql.json({ statistics: rStats.response, odds: rOdds?.response ?? null, fixture: f } as any)})
         returning id`;
+      // Para la pestaña Radar: si se pidió la cuota en vivo y no vino el mercado, es un hueco de cobertura
+      resultadoDetalle.set(id, rOdds && !(rOdds.response ?? []).length ? "sin_cuota_vivo" : "evaluado");
+      evaluaciones.set(id, { ...ev.condiciones, d: Number(dominancia.toFixed(2)), mo: momentum === null ? null : Number(momentum.toFixed(2)), c: cuotaOver.cuota });
       log(`snap ${id} ${minuto}' D=${dominancia.toFixed(2)} M=${momentum?.toFixed(2) ?? "-"} cuota=${cuotaOver.cuota ?? "-"}`);
 
       if (ev.disparar) {
@@ -330,10 +373,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    return await bitacora("ok", { vivos, candidatos: candidatosN, llamadas: api.llamadas, alertas: alertasNuevas, resueltas, detalle });
+    return await bitacora("ok", { vivos, candidatos: candidatosN, llamadas: api.llamadas, alertas: alertasNuevas, resueltas, detalle, radar: fotoRadar() });
   } catch (e) {
     detalle.error = (e as Error).message;
     const motivo = e instanceof SinPresupuesto ? "presupuesto" : "error";
-    return await bitacora(motivo, { vivos, candidatos: candidatosN, llamadas: api.llamadas, alertas: alertasNuevas, resueltas, detalle });
+    return await bitacora(motivo, { vivos, candidatos: candidatosN, llamadas: api.llamadas, alertas: alertasNuevas, resueltas, detalle, radar: lista.length ? fotoRadar() : null });
   }
 });

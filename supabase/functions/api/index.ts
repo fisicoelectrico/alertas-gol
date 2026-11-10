@@ -10,6 +10,7 @@
 //
 // Rutas (todas bajo /functions/v1/api):
 //   GET  /resumen        pantalla "En vivo" + estado del escáner
+//   GET  /radar          pestaña "Radar": todos los partidos en vivo del último barrido y por qué se descartan
 //   GET  /alertas        pendientes y resueltas
 //   GET  /rendimiento    acierto vs implícita, ROI (v_rendimiento)
 //   GET  /ligas          ligas vistas y su rendimiento
@@ -98,6 +99,34 @@ async function resumen() {
   };
 }
 
+// Pestaña Radar. No llama a API-Football: lee la foto que el escáner guardó en su último barrido.
+async function radar() {
+  const [ultimo] = await sql`select ts, motivo, partidos_vivos, llamadas, radar
+                             from futbol.escaneos where radar is not null order by ts desc limit 1`;
+  // Serie de las últimas 24 h: cuántos partidos en vivo vio cada radar (para la mini-gráfica)
+  const historial = await sql`select ts, partidos_vivos as vivos from futbol.escaneos
+                              where partidos_vivos is not null and ts > now() - interval '24 hours' order by ts`;
+  // Ligas vistas en 24 h: cuántos partidos distintos y cuántos chocaron con cada tipo de hueco.
+  // Un partido cuenta en una categoría si en ALGÚN barrido cayó ahí (no solo en el último).
+  const ligas = await sql`
+    with x as (
+      select e.ts, j from futbol.escaneos e, jsonb_array_elements(e.radar) j
+      where e.radar is not null and e.ts > now() - interval '24 hours')
+    select (j->>'lg')::int as id, max(j->>'liga') as liga, max(j->>'pais') as pais,
+           count(distinct j->>'id')::int as partidos,
+           count(distinct j->>'id') filter (where j->>'mo' = 'sin_cuota_pre')::int as sin_cuota_pre,
+           count(distinct j->>'id') filter (where j->>'mo' = 'sin_estadisticas')::int as sin_estadisticas,
+           count(distinct j->>'id') filter (where j->>'mo' = 'sin_cuota_vivo')::int as sin_cuota_vivo,
+           count(distinct j->>'id') filter (where j->>'mo' = 'aislada')::int as aislada,
+           count(distinct j->>'id') filter (where j->>'mo' in ('evaluado','sin_cuota_vivo','sin_estadisticas','sin_cupo','ya_alertado'))::int as candidatos,
+           max(ts) as visto
+    from x group by 1 order by partidos desc, liga`;
+  const cfg = await leerConfig();
+  return { ultimo: ultimo ?? null, historial, ligas, horas_activas_utc: cfg.horas_activas_utc,
+           minuto_min: cfg.minuto_min, minuto_max: cfg.minuto_max, cuota_fav_max: cfg.cuota_fav_max,
+           diferencia_min: cfg.diferencia_min };
+}
+
 async function alertas() {
   return await sql`
     select a.*, p.local, p.visitante, p.favorito, p.goles_local_90, p.goles_visitante_90, l.nombre as liga
@@ -179,6 +208,7 @@ Deno.serve(async (req) => {
     if (req.method === "GET") {
       if (ruta === "/resumen") return json(await resumen());
       if (ruta === "/alertas") return json(await alertas());
+      if (ruta === "/radar") return json(await radar());
       if (ruta === "/rendimiento") return json(await rendimiento());
       if (ruta === "/ligas") return json(await ligas());
       if (ruta === "/config") return json(await config());

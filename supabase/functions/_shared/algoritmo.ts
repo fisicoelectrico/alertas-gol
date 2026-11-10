@@ -295,3 +295,43 @@ export function intervaloEfectivo(args: {
   const radares = Math.max(1, Math.floor(disponibles * fraccionRadar));
   return Math.max(intervaloBase, Math.ceil(minutos / radares));
 }
+
+// ---------------- Radar: por qué se descarta cada partido en vivo ----------------
+//
+// Cada partido que trae el radar (/fixtures?live=all) termina en UN motivo: el primer
+// filtro del embudo que no pasa. No gasta consultas: se decide con lo que ya se sabe.
+// El orden importa: primero lo que es del mercado o de la API (cobertura), después
+// tu decisión (liga aislada) y al final los filtros de la regla.
+//
+//   Cobertura (la API no trae el dato)  → sin_cuota_pre, sin_estadisticas, sin_cuota_vivo
+//   Decisión tuya                       → aislada
+//   Regla (todavía no aplica o no pasa) → aun_no_2T, otro_estado, fuera_ventana, empatado,
+//                                         favorito_no_pierde, sin_favorito_claro, sin_consultar,
+//                                         ya_alertado, sin_cupo
+//   Seguimiento (pasó el filtro)        → evaluado (con las condiciones de la regla)
+export type MotivoRadar =
+  | "aislada" | "sin_cuota_pre" | "aun_no_2T" | "otro_estado" | "fuera_ventana" | "empatado"
+  | "favorito_no_pierde" | "sin_favorito_claro" | "sin_consultar" | "ya_alertado"
+  | "sin_cupo" | "sin_estadisticas" | "sin_cuota_vivo" | "evaluado";
+
+export function motivoRadar(x: {
+  estado: string; minuto: number; gl: number; gv: number;
+  habilitada: boolean; consultada: boolean;            // ¿ya se pidió la cuota prepartido?
+  favorito: "home" | "away" | null;
+  cuotaFav: number | null;                             // cuota prepartido del favorito
+  yaAlertado: boolean;
+  detalle?: "sin_estadisticas" | "sin_cuota_vivo" | "evaluado" | null;  // resultado del paso 5
+}, r: Regla): MotivoRadar {
+  if (!x.habilitada) return "aislada";
+  if (x.consultada && !x.favorito) return "sin_cuota_pre";
+  if (x.estado === "1H" || x.estado === "HT") return "aun_no_2T";
+  if (x.estado !== "2H") return "otro_estado";
+  if (x.minuto < r.minuto_min || x.minuto > r.minuto_max) return "fuera_ventana";
+  if (x.gl === x.gv) return "empatado";
+  if (!x.consultada) return "sin_consultar";
+  if (!(x.cuotaFav !== null && x.cuotaFav <= r.cuota_fav_max)) return "sin_favorito_claro";
+  const desventaja = x.favorito === "home" ? x.gv - x.gl : x.gl - x.gv;
+  if (desventaja < r.diferencia_min) return "favorito_no_pierde";
+  if (x.yaAlertado) return "ya_alertado";
+  return x.detalle ?? "sin_cupo";
+}
