@@ -16,6 +16,24 @@ const hace = (ts) => {
   const m = Math.round((Date.now() - new Date(ts)) / 60000);
   return m < 1 ? "hace instantes" : m < 60 ? `hace ${m} min` : m < 1440 ? `hace ${Math.round(m / 60)} h` : `hace ${Math.round(m / 1440)} d`;
 };
+// El radar guarda sus horas en UTC (la cuota de API-Football se reinicia a las 00:00 UTC).
+// La pantalla las muestra en la hora local del dispositivo (Colombia = UTC−5).
+const OFFSET_H = -new Date().getTimezoneOffset() / 60;             // Colombia: −5
+const utcALocal = (h) => ((h + OFFSET_H) % 24 + 24) % 24;
+const localAUtc = (h) => ((h - OFFSET_H) % 24 + 24) % 24;
+const etiquetaHora = (h) => (h === 0 ? "12a" : h < 12 ? `${h}a` : h === 12 ? "12p" : `${h - 12}p`);
+function resumirHoras(utc) {
+  // Convierte [12,13,…,2] UTC en tramos legibles en hora local: "7 a. m. – 10 p. m."
+  const loc = new Set((utc || []).map(utcALocal));
+  if (!loc.size) return "Apagado todo el día";
+  if (loc.size === 24) return "Las 24 horas";
+  const fmt = (h) => { const x = h % 24; return x === 0 ? "12 a. m." : x < 12 ? `${x} a. m.` : x === 12 ? "12 p. m." : `${x - 12} p. m.`; };
+  const tramos = [];
+  for (let h = 0; h < 24; h++) {
+    if (loc.has(h) && !loc.has((h + 23) % 24)) { let f = h; while (loc.has((f + 1) % 24) && (f + 1) % 24 !== h) f++; tramos.push(`${fmt(h)} – ${fmt(f + 1)}`); }
+  }
+  return tramos.join(", ");
+}
 let toastT;
 function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("ver");
@@ -134,7 +152,7 @@ const pantallas = {
       ? r.en_vivo.map((p) => tarjetaPartido(p, r)).join("")
       : `<div class="tarjeta vacio"><strong>Sin candidatos ahora</strong>
            Un candidato es un favorito que va perdiendo en el segundo tiempo.
-           ${enHorario ? "El radar sigue buscando." : "El radar está fuera de su horario activo; se reanuda solo."}</div>`;
+           ${enHorario ? "El radar sigue buscando." : `El radar está fuera de su horario activo (${esc(resumirHoras(horas))}); se reanuda solo.`}</div>`;
     return `<div class="titulo-seccion"><h2>Candidatos en seguimiento</h2><small>${r.en_vivo.length}</small></div>
       ${lista}
       <p class="nota">${esc(estado)}. Con el plan gratuito el radar pasa cada 15 a 20 minutos, no minuto a minuto.</p>`;
@@ -236,6 +254,12 @@ const pantallas = {
         if (r) toast(r.enviados ? `Enviada a ${r.enviados} dispositivo(s)` : "No hay dispositivos suscritos");
       });
       $("#btn-guardar")?.addEventListener("click", () => guardar(P));
+      document.querySelectorAll(".hora").forEach((b) => b.addEventListener("click", () => {
+        const on = !b.classList.contains("on");
+        b.classList.toggle("on", on); b.setAttribute("aria-pressed", on);
+        const utc = [...document.querySelectorAll(".hora.on")].map((x) => localAUtc(Number(x.dataset.hora)));
+        $("#horas-resumen").innerHTML = `<b>${esc(resumirHoras(utc))}</b> · sin guardar`;
+      }));
       $("#btn-pin")?.addEventListener("click", async () => {
         const nuevo = prompt("PIN nuevo (6 a 12 dígitos):"); if (!nuevo) return;
         const r = await conPin((pin) => post("/admin/pin", { pin, nuevo }));
@@ -268,6 +292,18 @@ const pantallas = {
           <input id="w-${k}" type="number" step="any" inputmode="decimal" data-peso="${k}" value="${esc(pesos[k])}"></div>`).join("")}
       </div>
 
+      <div class="titulo-seccion"><h2>Horario del radar</h2><small>hora de este dispositivo</small></div>
+      <div class="tarjeta">
+        <p id="horas-resumen"><b>${esc(resumirHoras(P.horas_activas_utc?.valor))}</b></p>
+        <div class="horas" role="group" aria-label="Horas activas del radar">
+          ${Array.from({ length: 24 }, (_, h) => {
+            const on = (P.horas_activas_utc?.valor || []).includes(localAUtc(h));
+            return `<button type="button" class="hora ${on ? "on" : ""}" data-hora="${h}" aria-pressed="${on}">${etiquetaHora(h)}</button>`;
+          }).join("")}
+        </div>
+        <p class="nota">Toca una hora para activarla o apagarla y pulsa "Guardar cambios" abajo. Fuera de estas horas el radar solo corre si hay un partido en seguimiento. Más horas no significa más consultas: el presupuesto diario se reparte entre las horas activas, así que con más horas cada radar queda más espaciado.</p>
+      </div>
+
       <div class="titulo-seccion"><h2>Operación</h2><small>no cambia la versión</small></div>
       <div class="tarjeta">
         <div class="campo"><label for="p-escaneo_activo">Escáner activo<small>Interruptor general</small></label>
@@ -275,8 +311,6 @@ const pantallas = {
         <div class="campo"><label for="p-cuotas_siempre">Modo calibración<small>${esc(P.cuotas_siempre?.descripcion || "")}</small></label>
           <label class="sw"><input id="p-cuotas_siempre" type="checkbox" data-k="cuotas_siempre" data-tipo="bool" ${P.cuotas_siempre?.valor ? "checked" : ""}><span></span></label></div>
         ${["presupuesto_diario", "reserva_api", "intervalo_radar_min", "intervalo_seguimiento_min", "fraccion_radar", "max_detalle_escaneo", "stake"].map((k) => campoNum(k)).join("")}
-        <div class="campo" style="display:block"><label for="p-horas">horas_activas_utc<small>${esc(P.horas_activas_utc?.descripcion || "")}. Colombia = UTC−5.</small></label>
-          <input id="p-horas" class="ancho" type="text" data-k="horas_activas_utc" data-tipo="horas" value="${esc((P.horas_activas_utc?.valor || []).join(", "))}" style="margin-top:8px"></div>
         <div class="botones"><button class="btn" id="btn-guardar">Guardar cambios</button></div>
       </div>
 
@@ -304,6 +338,12 @@ async function guardar(P) {
     else v = Number(i.value);
     if (JSON.stringify(v) !== JSON.stringify(P[k]?.valor)) cambios[k] = v;
   });
+  const horasGrid = document.querySelectorAll(".hora");
+  if (horasGrid.length) {
+    const utc = [...horasGrid].filter((b) => b.classList.contains("on")).map((b) => localAUtc(Number(b.dataset.hora)));
+    const ordenar = (a) => [...a].sort((x, y) => x - y);
+    if (JSON.stringify(ordenar(utc)) !== JSON.stringify(ordenar(P.horas_activas_utc?.valor || []))) cambios.horas_activas_utc = utc;
+  }
   const pesos = {};
   document.querySelectorAll("[data-peso]").forEach((i) => { pesos[i.dataset.peso] = Number(i.value); });
   if (Object.keys(pesos).length && JSON.stringify(pesos) !== JSON.stringify(Object.fromEntries(Object.keys(pesos).map((k) => [k, P.pesos_ip.valor[k]])))) cambios.pesos_ip = pesos;

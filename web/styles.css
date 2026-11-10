@@ -135,6 +135,12 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
 .sw input:checked + span::after { transform: translateX(18px); background: var(--cesped); }
 .sw input:focus-visible + span { outline: 2px solid var(--cesped); outline-offset: 2px; }
 
+.horas { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 12px; }
+.hora {
+  background: var(--panel-2); border: 1px solid var(--linea); border-radius: 8px; padding: 9px 0;
+  font: 13px var(--mono); color: var(--tenue); cursor: pointer; min-height: 40px;
+}
+.hora.on { background: rgba(61, 220, 132, .18); border-color: var(--cesped); color: var(--cesped); font-weight: 600; }
 .buscar { width: 100% !important; text-align: left !important; margin-bottom: 10px; font-family: inherit !important; }
 .liga-fila { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--linea); }
 .liga-fila:first-child { border-top: 0; }
