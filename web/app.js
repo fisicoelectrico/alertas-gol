@@ -168,6 +168,15 @@ function motivoInfo(mo, r) {
   const [grupo, texto] = M[mo] || ["regla", mo || "–"];
   return { grupo, texto };
 }
+// "Evaluado" solo dice que se midió. Lo que importa es qué condición de la regla faltó.
+// ev trae las condiciones del snapshot: true = cumple, false = no cumple, null = sin dato.
+function textoEvaluado(ev) {
+  if (!ev) return "Evaluado en este radar";
+  const nombres = { dominancia: "dominancia", momentum: "momentum", cuota: "cuota" };
+  const faltan = Object.keys(nombres).filter((k) => ev[k] !== true)
+    .map((k) => (ev[k] === null ? `${nombres[k]} sin dato` : nombres[k]));
+  return faltan.length ? `Evaluado, no alerta: falla ${faltan.join(", ")}` : "Cumple la regla: alerta enviada";
+}
 const ESTADOS = { "1H": "1T", HT: "Descanso", "2H": "2T", ET: "Prórroga", BT: "Pausa", P: "Penales", SUSP: "Susp.", INT: "Interr.", LIVE: "Vivo" };
 
 // Barras de partidos en vivo por radar en las últimas 24 h
@@ -213,7 +222,10 @@ const pantallas = {
     const u = r.ultimo;
     if (!u) return `<div class="tarjeta vacio"><strong>Sin foto del radar todavía</strong>
       La lista aparece después del próximo barrido del escáner (${esc(resumirHoras(r.horas_activas_utc))}).</div>`;
-    const items = (u.radar || []).map((p) => ({ ...p, ...motivoInfo(p.mo, r) }));
+    const items = (u.radar || []).map((p) => {
+      const m = motivoInfo(p.mo, r);
+      return { ...p, ...m, texto: p.mo === "evaluado" ? textoEvaluado(p.ev) : m.texto };
+    });
     const cuenta = (g) => items.filter((p) => p.grupo === g).length;
     const porEstado = {};
     items.forEach((p) => { const k = ESTADOS[p.e] || p.e; porEstado[k] = (porEstado[k] || 0) + 1; });
