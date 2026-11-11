@@ -27,6 +27,33 @@ export async function estadoPresupuesto(cfg: Config): Promise<EstadoPresupuesto>
   return { usadas_hoy: r.usadas, restantes_api: r.restantes ?? null, disponibles: Math.max(0, disponibles) };
 }
 
+/**
+ * Pregunta a la API cuánta cuota le queda de verdad, usando /status (NO cuenta contra la cuota diaria).
+ * Por qué existe: el header x-ratelimit-requests-remaining de una llamada hecha justo después de las
+ * 00:00 UTC puede traer todavía el contador del día anterior (la API se reinicia unos segundos o
+ * minutos tarde). Ese valor viejo quedaba guardado como "restantes" del día nuevo y bloqueaba el
+ * escáner TODO el día (pasó el 2026-11-11: 6 restantes - 6 de reserva = 0 disponibles).
+ * Escribe el valor real en las filas de hoy y lo devuelve (null si /status falla).
+ */
+export async function verificarCuotaReal(key: string): Promise<number | null> {
+  try {
+    const res = await fetch(BASE + "/status", { headers: { "x-apisports-key": key } });
+    const cuerpo = await res.json();
+    const req = cuerpo?.response?.requests;
+    const actual = Number(req?.current), limite = Number(req?.limit_day);
+    if (!res.ok || !Number.isFinite(actual) || !Number.isFinite(limite)) return null;
+    const restantes = Math.max(0, limite - actual);
+    await sql`
+      insert into futbol.api_uso (fecha, endpoint, llamadas, restantes)
+      values ((now() at time zone 'utc')::date, '/status', 0, ${restantes})
+      on conflict (fecha, endpoint) do update set restantes = excluded.restantes`;
+    await sql`update futbol.api_uso set restantes = ${restantes} where fecha = (now() at time zone 'utc')::date`;
+    return restantes;
+  } catch {
+    return null;
+  }
+}
+
 export class ApiFootball {
   llamadas = 0;
   private disponibles: number;

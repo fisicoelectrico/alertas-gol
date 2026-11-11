@@ -30,7 +30,7 @@
 //   Bitácora: futbol.escaneos (motivo "ok" = radar, "seguimiento" = solo candidatos).
 // =====================================================================
 import { sql, leerConfig, Config } from "../_shared/db.ts";
-import { ApiFootball, estadoPresupuesto, SinPresupuesto } from "../_shared/apifootball.ts";
+import { ApiFootball, estadoPresupuesto, SinPresupuesto, verificarCuotaReal } from "../_shared/apifootball.ts";
 import * as A from "../_shared/algoritmo.ts";
 import { notificarTodos } from "../_shared/notificar.ts";
 
@@ -69,6 +69,7 @@ Deno.serve(async (req) => {
       presupuesto: est,
       regla: reglaDesde(cfg),
       ultimo_radar: cfg.ultimo_radar ?? null,
+      ultimo_seguimiento: cfg.ultimo_seguimiento ?? null,
     });
   }
 
@@ -102,7 +103,15 @@ Deno.serve(async (req) => {
     typeof cfg.token_forzar === "string" && req.headers.get("x-token") === cfg.token_forzar;
   if (!forzar && !enHorario && nCandidatos === 0 && nPendientes === 0) return json({ motivo: "fuera_de_horario" });
 
-  const est = await estadoPresupuesto(cfg);
+  let est = await estadoPresupuesto(cfg);
+  // Poka-yoke del reinicio diario: si NUESTRA cuenta dice que hay cupo pero el último header de la
+  // API dice que no, puede ser un header viejo (del día anterior). Se confirma con /status, que es
+  // gratis, y se recalcula. Si la API de verdad está agotada, /status lo confirma y seguimos parados.
+  const segunNosotros = Number(cfg.presupuesto_diario ?? 100) - Number(cfg.reserva_api ?? 6) - est.usadas_hoy;
+  if (est.disponibles < 1 && segunNosotros > 0) {
+    await verificarCuotaReal(key);
+    est = await estadoPresupuesto(cfg);
+  }
   if (est.disponibles < 1) return json({ motivo: "presupuesto_agotado", presupuesto: est });
 
   // Reloj del radar: reparte lo que queda del presupuesto entre las horas activas que faltan.
