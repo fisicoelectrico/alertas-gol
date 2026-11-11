@@ -194,4 +194,28 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
 .motivo.aislada { color: var(--azul); }
 td .sub { display: block; color: var(--tenue); font-size: 11px; }
 
+/* Historial por país (Rendimiento) */
+.historial { padding: 4px 14px; }
+.hfila { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 40px) 52px; gap: 6px; align-items: center; padding: 10px 0; }
+.hcab { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--tenue); font-weight: 600; padding: 8px 0; }
+.hcab span:not(:first-child) { text-align: right; }
+.hpais { border-top: 1px solid var(--linea); }
+.hpais > summary { list-style: none; cursor: pointer; }
+.hpais > summary::-webkit-details-marker { display: none; }
+.hpais > summary .hnom b::before { content: "▸"; display: inline-block; width: 14px; color: var(--tenue); transition: transform .15s; }
+.hpais[open] > summary .hnom b::before { transform: rotate(90deg); }
+.hpais > summary:focus-visible { outline: 2px solid var(--cesped); outline-offset: 2px; border-radius: 6px; }
+.hnom { min-width: 0; }
+.hnom b { font-weight: 600; }
+.hnom small { display: block; font-size: 12px; color: var(--tenue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hpais > summary .hnom small { padding-left: 14px; }
+.hnom.envuelve small { white-space: normal; }
+.hn { text-align: right; font: 600 14px var(--mono); font-variant-numeric: tabular-nums; }
+.hn.cero { color: var(--tenue); font-weight: 400; }
+.hn.si { color: var(--ambar); }
+.hligas { background: var(--panel-2); border-radius: 10px; margin-bottom: 10px; padding: 0 10px; }
+.hliga { font-size: 13px; padding: 8px 0; border-top: 1px solid var(--linea); }
+.hliga:first-child { border-top: 0; }
+.hliga .hn { font-size: 13px; }
+
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

@@ -12,7 +12,7 @@
 //   GET  /resumen        pantalla "En vivo" + estado del escáner
 //   GET  /radar          pestaña "Radar": todos los partidos en vivo del último barrido y por qué se descartan
 //   GET  /alertas        pendientes y resueltas
-//   GET  /rendimiento    acierto vs implícita, ROI (v_rendimiento)
+//   GET  /rendimiento    acierto vs implícita, ROI (v_rendimiento) + historial por liga (v_ligas_historial)
 //   GET  /ligas          ligas vistas y su rendimiento
 //   GET  /config         parámetros, versiones de regla y consumo de API
 //   GET  /vapid          llave pública para suscribirse a push
@@ -144,7 +144,10 @@ async function rendimiento() {
                                     count(*)::int as total from futbol.alertas`;
   const [datos] = await sql`select (select count(*)::int from futbol.snapshots) as snapshots,
                                    (select count(distinct fixture_id)::int from futbol.snapshots) as partidos_seguidos`;
-  return { filas, conteo, datos };
+  // Historial acumulado por liga (vista v_ligas_historial); la PWA lo agrupa por país.
+  const historial = await sql`select * from futbol.v_ligas_historial
+                              where precandidatos > 0 order by candidatos desc, precandidatos desc, vistos desc`;
+  return { filas, conteo, datos, historial };
 }
 
 async function ligas() {

@@ -193,6 +193,59 @@ function barrasVivos(hist) {
     <div class="spark-pie"><span>hace 24 h</span><span>máx. ${vMax} en un radar</span><span>ahora</span></div>`;
 }
 
+// Historial por país: la vista v_ligas_historial trae una fila por liga; aquí se suman por país.
+// La suma es exacta porque un partido pertenece a una sola liga. La conclusión se saca por liga.
+const PAISES_ES = { World: "Internacional", England: "Inglaterra", Spain: "España", France: "Francia", Brazil: "Brasil",
+  Germany: "Alemania", Italy: "Italia", Netherlands: "Países Bajos", Belgium: "Bélgica", Scotland: "Escocia", Wales: "Gales",
+  Cameroon: "Camerún", "Czech-Republic": "Chequia", Denmark: "Dinamarca", "El-Salvador": "El Salvador", Lithuania: "Lituania",
+  Mexico: "México", Slovakia: "Eslovaquia", Turkey: "Turquía", Algeria: "Argelia", Romania: "Rumania", Peru: "Perú",
+  Sweden: "Suecia", Norway: "Noruega", Poland: "Polonia", Switzerland: "Suiza", Austria: "Austria", Greece: "Grecia",
+  Japan: "Japón", "South-Korea": "Corea del Sur", "Saudi-Arabia": "Arabia Saudita", USA: "Estados Unidos", Egypt: "Egipto",
+  Morocco: "Marruecos", Ukraine: "Ucrania", Russia: "Rusia", Ireland: "Irlanda", "Northern-Ireland": "Irlanda del Norte",
+  Croatia: "Croacia", Serbia: "Serbia", Hungary: "Hungría", Finland: "Finlandia", Iceland: "Islandia", Panama: "Panamá" };
+const MIN_RESUELTAS = 20; // con menos alertas resueltas el % de acierto de una liga es ruido
+const historialAbiertos = new Set();
+function historialPaises(h) {
+  if (!h?.length) return "";
+  const paises = [...h.reduce((m, l) => {
+    const p = m.get(l.pais) || { pais: l.pais, ligas: [], precandidatos: 0, candidatos: 0, alertas: 0, aciertos: 0, fallos: 0, implicita: 0 };
+    p.ligas.push(l);
+    for (const k of ["precandidatos", "candidatos", "alertas", "aciertos", "fallos"]) p[k] += Number(l[k]);
+    // Implícita del país = promedio de las ligas pesado por alertas resueltas
+    p.implicita += Number(l.prob_implicita_pct || 0) * (Number(l.aciertos) + Number(l.fallos));
+    return m.set(l.pais, p);
+  }, new Map()).values()].sort((a, b) => b.alertas - a.alertas || b.candidatos - a.candidatos || b.precandidatos - a.precandidatos || a.pais.localeCompare(b.pais));
+  const celda = (v, cls = "") => `<span class="hn ${Number(v) ? cls : "cero"}">${v}</span>`;
+  // Verde si el acierto supera la probabilidad implícita media de esas alertas (1/cuota)
+  const acierto = (a, f, implicita) => {
+    const r = a + f;
+    if (!r) return `<span class="hn cero">–</span>`;
+    if (r < MIN_RESUELTAS) return `<span class="hn cero" title="Muestra chica: ${r} de ${MIN_RESUELTAS} resueltas">${a}/${r}</span>`;
+    const pct = a * 100 / r;
+    return `<span class="hn ${pct > Number(implicita) ? "pos" : "neg"}" title="Implícita media ${n(implicita, 1)}%">${n(pct, 0)}%</span>`;
+  };
+  const filaLiga = (l) => {
+    const c = Number(l.candidatos);
+    const cob = c ? `stats ${l.con_stats}/${c} · cuota vivo ${l.con_cuota_vivo}/${c}` : "sin candidatos aún";
+    return `<div class="hfila hliga"><span class="hnom envuelve">${esc(l.liga)}<small>${cob}${l.habilitada ? "" : " · aislada"}</small></span>
+      ${celda(l.precandidatos)}${celda(l.candidatos, "si")}${celda(l.alertas, "si")}${acierto(Number(l.aciertos), Number(l.fallos), l.prob_implicita_pct)}</div>`;
+  };
+  setTimeout(() => document.querySelectorAll("details.hpais").forEach((d) => d.addEventListener("toggle", () => {
+    d.open ? historialAbiertos.add(d.dataset.p) : historialAbiertos.delete(d.dataset.p);
+  })));
+  const desde = h.reduce((m, l) => (l.desde && (!m || l.desde < m) ? l.desde : m), null);
+  return `<div class="titulo-seccion"><h2>Historial por país</h2><small>${paises.length} países · ${h.length} ligas</small></div>
+    <div class="tarjeta historial">
+      <div class="hfila hcab"><span>País</span><span title="Alguien perdía y se pidió la cuota prepartido">Prec.</span><span title="El escáner pidió su detalle (estadísticas)">Cand.</span><span>Alert.</span><span title="Aciertos sobre alertas resueltas">Acierto</span></div>
+      ${paises.map((p) => `<details class="hpais" data-p="${esc(p.pais)}" ${historialAbiertos.has(p.pais) ? "open" : ""}>
+        <summary class="hfila"><span class="hnom"><b>${esc(PAISES_ES[p.pais] || p.pais.replace(/-/g, " "))}</b><small>${p.ligas.length === 1 ? esc(p.ligas[0].liga) : `${p.ligas.length} ligas`}</small></span>
+          ${celda(p.precandidatos)}${celda(p.candidatos, "si")}${celda(p.alertas, "si")}${acierto(p.aciertos, p.fallos, p.implicita / ((p.aciertos + p.fallos) || 1))}</summary>
+        <div class="hligas">${p.ligas.map(filaLiga).join("")}</div>
+      </details>`).join("")}
+    </div>
+    <p class="nota">Acumulado${desde ? ` desde ${hora(desde)}` : ""}, no se borra. Una liga con muchos candidatos solo da volumen: la que sirve es la que acierta por encima de la probabilidad implícita de sus cuotas (verde si la supera, rojo si no). El % aparece cuando la liga junta ${MIN_RESUELTAS} alertas resueltas; antes se muestra aciertos/resueltas en gris. "stats" y "cuota vivo" dicen cuántos candidatos trajeron esos datos: así se ve qué ligas sí tienen cobertura.</p>`;
+}
+
 let filtroRadar = localStorage.getItem("filtroRadar") || "todos";
 
 // ---------- pantallas ----------
@@ -306,7 +359,8 @@ const pantallas = {
       return `<div class="tarjeta vacio"><strong>Sin alertas resueltas todavía</strong>
         Aquí se compara el acierto real contra la probabilidad implícita de la cuota.
         A cuota 1,40 hay que acertar más del 71,4% para ganar dinero.</div>
-        <p class="nota">Datos acumulados: ${r.datos.snapshots} snapshots de ${r.datos.partidos_seguidos} partidos · ${r.conteo.pendientes} alertas pendientes.</p>`;
+        <p class="nota">Datos acumulados: ${r.datos.snapshots} snapshots de ${r.datos.partidos_seguidos} partidos · ${r.conteo.pendientes} alertas pendientes.</p>
+        ${historialPaises(r.historial)}`;
     }
     const bloque = (g) => {
       const ventaja = Number(g.acierto_pct) - Number(g.prob_implicita_pct);
@@ -337,7 +391,8 @@ const pantallas = {
     return `${globales.map(bloque).join("")}
       ${tabla("Por franja de minuto", r.filas.filter((f) => f.franja_minuto !== "(todas)"), "Franja")}
       ${tabla("Por liga", r.filas.filter((f) => f.liga !== "(todas)"), "Liga")}
-      <p class="nota">Pendientes: ${r.conteo.pendientes} · anuladas: ${r.conteo.anuladas} · snapshots guardados: ${r.datos.snapshots}.</p>`;
+      <p class="nota">Pendientes: ${r.conteo.pendientes} · anuladas: ${r.conteo.anuladas} · snapshots guardados: ${r.datos.snapshots}.</p>
+      ${historialPaises(r.historial)}`;
   },
 
   async ligas() {
