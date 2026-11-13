@@ -41,6 +41,7 @@ export interface Regla {
   momentum_ventana_min: number;
   momentum_gap_min: number;
   pesos_ip: Pesos;
+  patrones_copa: string[];   // nombres de competición que se descartan siempre (v3)
 }
 
 // Nombres que usa API-Football en /fixtures/statistics → nuestras claves
@@ -296,6 +297,23 @@ export function intervaloEfectivo(args: {
   return Math.max(intervaloBase, Math.ceil(minutos / radares));
 }
 
+// ---------------- Copas: exclusión permanente por nombre ----------------
+//
+// Las copas (mundiales, nacionales, continentales, eliminatorias) no tienen el ritmo estable
+// de una liga: rotaciones, partidos únicos, rivales de categorías distintas. Por decisión de
+// Fredy (2026-11-13, regla v3) se descartan antes de gastar una sola consulta y nunca entran
+// a la base. Se comparan sin mayúsculas ni tildes, como subcadena del nombre de la liga:
+// "cup" atrapa "FA Cup", "Africa Cup of Nations - Qualification", "Premier League Cup";
+// "copa" atrapa "Copa del Rey", "Copa Colombia", "Super Copa". Patrones en futbol.config
+// (clave patrones_copa, es_regla = true).
+const sinTildes = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+export function esCopa(nombreLiga: string | null | undefined, patrones: string[]): boolean {
+  if (!nombreLiga || !patrones?.length) return false;
+  const n = sinTildes(nombreLiga);
+  return patrones.some((p) => p && n.includes(sinTildes(p)));
+}
+
 // ---------------- Radar: por qué se descarta cada partido en vivo ----------------
 //
 // Cada partido que trae el radar (/fixtures?live=all) termina en UN motivo: el primer
@@ -304,17 +322,18 @@ export function intervaloEfectivo(args: {
 // tu decisión (liga aislada) y al final los filtros de la regla.
 //
 //   Cobertura (la API no trae el dato)  → sin_cuota_pre, sin_estadisticas, sin_cuota_vivo
-//   Decisión tuya                       → aislada
+//   Decisión tuya                       → copa (permanente, por nombre), aislada (pestaña Ligas)
 //   Regla (todavía no aplica o no pasa) → aun_no_2T, otro_estado, fuera_ventana, empatado,
 //                                         favorito_no_pierde, sin_favorito_claro, sin_consultar,
 //                                         ya_alertado, sin_cupo
 //   Seguimiento (pasó el filtro)        → evaluado (con las condiciones de la regla)
 export type MotivoRadar =
-  | "aislada" | "sin_cuota_pre" | "aun_no_2T" | "otro_estado" | "fuera_ventana" | "empatado"
+  | "copa" | "aislada" | "sin_cuota_pre" | "aun_no_2T" | "otro_estado" | "fuera_ventana" | "empatado"
   | "favorito_no_pierde" | "sin_favorito_claro" | "sin_consultar" | "ya_alertado"
   | "sin_cupo" | "sin_estadisticas" | "sin_cuota_vivo" | "evaluado";
 
 export function motivoRadar(x: {
+  copa?: boolean;                                      // competición excluida por nombre (esCopa)
   estado: string; minuto: number; gl: number; gv: number;
   habilitada: boolean; consultada: boolean;            // ¿ya se pidió la cuota prepartido?
   favorito: "home" | "away" | null;
@@ -322,6 +341,7 @@ export function motivoRadar(x: {
   yaAlertado: boolean;
   detalle?: "sin_estadisticas" | "sin_cuota_vivo" | "evaluado" | null;  // resultado del paso 5
 }, r: Regla): MotivoRadar {
+  if (x.copa) return "copa";
   if (!x.habilitada) return "aislada";
   if (x.consultada && !x.favorito) return "sin_cuota_pre";
   if (x.estado === "1H" || x.estado === "HT") return "aun_no_2T";

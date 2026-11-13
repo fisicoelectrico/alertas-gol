@@ -49,6 +49,7 @@ function reglaDesde(cfg: Config): A.Regla {
     momentum_ventana_min: Number(cfg.momentum_ventana_min),
     momentum_gap_min: Number(cfg.momentum_gap_min),
     pesos_ip: cfg.pesos_ip,
+    patrones_copa: Array.isArray(cfg.patrones_copa) ? cfg.patrones_copa : ["cup", "copa"],
   };
 }
 
@@ -175,6 +176,7 @@ Deno.serve(async (req) => {
         const favorito = p?.favorito ?? null;
         const cuotaFav = favorito === "home" ? Number(p.cuota_pre_local) : favorito === "away" ? Number(p.cuota_pre_visitante) : null;
         const motivo = A.motivoRadar({
+          copa: A.esCopa(f.league.name, regla.patrones_copa),
           estado: f.fixture.status.short, minuto: f.fixture.status.elapsed ?? 0,
           gl: f.goals.home ?? 0, gv: f.goals.away ?? 0,
           habilitada: i?.habilitada ?? true, consultada: !!(p?.cuota_pre_consultada ?? i?.cuota_pre_consultada),
@@ -282,6 +284,7 @@ Deno.serve(async (req) => {
 
   // ¿Este fixture es candidato ahora mismo? (sin consultas: radar/fixture + cuota prepartido en caché)
   const esCandidato = (f: any) => {
+    if (A.esCopa(f.league?.name, regla.patrones_copa)) return false;
     const p = favs.get(f.fixture.id);
     const i = info.get(f.fixture.id);
     if (!p?.favorito || !i?.habilitada) return false;
@@ -465,9 +468,12 @@ Deno.serve(async (req) => {
     const radar = await api.get("/fixtures", { live: "all" });
     lista = radar.response ?? [];
     vivos = lista.length;
-    const porId = new Map<number, any>(lista.map((f) => [f.fixture.id, f]));
+    // Copas: se ven en la foto del radar (motivo "copa") pero no se guardan ni gastan consultas
+    const ligasOk = lista.filter((f) => !A.esCopa(f.league?.name, regla.patrones_copa));
+    if (ligasOk.length < lista.length) log(`copas descartadas: ${lista.length - ligasOk.length}`);
+    const porId = new Map<number, any>(ligasOk.map((f) => [f.fixture.id, f]));
     const idsVivos = [...porId.keys()];
-    await guardarPartidos(lista);
+    await guardarPartidos(ligasOk);
 
     // ---------- 2. Resolución de alertas ----------
     await resolverPendientes(porId, true);
@@ -478,7 +484,7 @@ Deno.serve(async (req) => {
 
     // ---------- 3. Favoritos (cuota prepartido, una sola vez por partido) ----------
     await cargarInfo(idsVivos);
-    const sinFavorito = lista
+    const sinFavorito = ligasOk
       .filter((f) => {
         const i = info.get(f.fixture.id);
         return i?.habilitada && !i.cuota_pre_consultada &&
@@ -511,7 +517,7 @@ Deno.serve(async (req) => {
     await cargarInfo(idsVivos);
 
     // ---------- 4. Candidatos ----------
-    const filtrados = lista.filter(esCandidato);
+    const filtrados = ligasOk.filter(esCandidato);
     for (const f of filtrados) if (sinCobertura(f.fixture.id)) resultadoDetalle.set(f.fixture.id, "sin_estadisticas");
     const candidatos = filtrados.filter((f) => !sinCobertura(f.fixture.id))
       .sort((a, b) => (b.fixture.status.elapsed ?? 0) - (a.fixture.status.elapsed ?? 0));
