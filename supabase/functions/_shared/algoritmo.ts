@@ -304,8 +304,9 @@ export function intervaloEfectivo(args: {
 // Fredy (2026-11-13, regla v3) se descartan antes de gastar una sola consulta y nunca entran
 // a la base. Se comparan sin mayúsculas ni tildes, como subcadena del nombre de la liga:
 // "cup" atrapa "FA Cup", "Africa Cup of Nations - Qualification", "Premier League Cup";
-// "copa" atrapa "Copa del Rey", "Copa Colombia", "Super Copa". Patrones en futbol.config
-// (clave patrones_copa, es_regla = true).
+// "copa" atrapa "Copa del Rey", "Copa Colombia", "Super Copa". Fredy sumó después coupe, taça,
+// pokal, coppa, trophy y las continentales que la API nombra sin la palabra (libertadores,
+// sudamericana, champions league). Patrones en futbol.config (clave patrones_copa, es_regla = true).
 const sinTildes = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
 export function esCopa(nombreLiga: string | null | undefined, patrones: string[]): boolean {

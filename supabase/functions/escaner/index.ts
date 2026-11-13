@@ -49,7 +49,7 @@ function reglaDesde(cfg: Config): A.Regla {
     momentum_ventana_min: Number(cfg.momentum_ventana_min),
     momentum_gap_min: Number(cfg.momentum_gap_min),
     pesos_ip: cfg.pesos_ip,
-    patrones_copa: Array.isArray(cfg.patrones_copa) ? cfg.patrones_copa : ["cup", "copa"],
+    patrones_copa: Array.isArray(cfg.patrones_copa) ? cfg.patrones_copa : ["cup", "copa", "coupe", "taça", "pokal", "coppa", "trophy", "libertadores", "sudamericana", "champions league"],
   };
 }
 
