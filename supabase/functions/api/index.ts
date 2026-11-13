@@ -90,7 +90,7 @@ async function resumen() {
        or exists (select 1 from futbol.alertas a where a.fixture_id = p.fixture_id and a.resultado = 'pendiente')
     order by p.minuto desc nulls last`;
   const [ultimo] = await sql`select ts, motivo, partidos_vivos, candidatos, llamadas, alertas, resueltas, detalle
-                             from futbol.escaneos where motivo <> 'seguimiento' order by ts desc limit 1`;
+                             from futbol.escaneos where motivo not in ('seguimiento', 'previa') order by ts desc limit 1`;
   const [ultimoSeg] = await sql`select ts, candidatos, llamadas, alertas, detalle
                                 from futbol.escaneos where motivo = 'seguimiento' order by ts desc limit 1`;
   return {

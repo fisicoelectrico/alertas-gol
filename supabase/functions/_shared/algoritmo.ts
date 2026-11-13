@@ -297,6 +297,58 @@ export function intervaloEfectivo(args: {
   return Math.max(intervaloBase, Math.ceil(minutos / radares));
 }
 
+// ---------------- Ahorro de consultas: zona útil y límite "tarde" (DECISIONES 27) ----------------
+//
+// ¿Por qué 77'? La regla exige momentum, y el momentum compara contra un snapshot tomado al menos
+// `momentum_gap_min` (8) minutos antes. Un partido cuyo PRIMER snapshot llega después del minuto
+// minuto_max − gap (85 − 8 = 77) ya no puede llegar a tener momentum antes del 85': no puede alertar.
+// Gastar en su favorito o en su detalle es tirar la consulta. No cambia la regla: cambia en qué se gasta.
+export function limiteTarde(r: Regla): number {
+  return r.minuto_max - r.momentum_gap_min;
+}
+
+// Zona útil de un partido, en minutos de reloj desde el pitazo inicial: desde el descanso (45')
+// hasta ~el minuto 77 de juego (45 + 15 de descanso + 32 + ~10 de reposición ≈ 105 de reloj).
+// Fuera de esa franja el radar no le sirve a ese partido: o todavía no hay 2T, o ya es tarde.
+export const ZONA_DESDE_MIN = 45, ZONA_HASTA_MIN = 105;
+
+/** ¿Algún partido de la agenda está ahora mismo en su zona útil? */
+export function hayPartidosEnZona(kickoffs: number[], ahora: Date): number {
+  const t = ahora.getTime();
+  return kickoffs.filter((k) => t >= k + ZONA_DESDE_MIN * 60000 && t <= k + ZONA_HASTA_MIN * 60000).length;
+}
+
+/**
+ * Minutos que quedan hoy (hasta las 00:00 UTC, cuando la API reinicia la cuota) en los que al menos
+ * un partido útil está en zona y la hora está activa. Es el "tiempo que vale la pena vigilar".
+ * Con esto el radar reparte el presupuesto solo entre esos minutos, y no entre horas muertas.
+ */
+export function minutosZonaRestantes(kickoffs: number[], ahora: Date, horasActivas: number[]): number {
+  const ini = Math.floor(ahora.getTime() / 60000);
+  const finDia = Date.UTC(ahora.getUTCFullYear(), ahora.getUTCMonth(), ahora.getUTCDate() + 1) / 60000;
+  const marcas = new Uint8Array(Math.max(0, finDia - ini));
+  for (const k of kickoffs) {
+    const km = Math.floor(k / 60000);
+    const a = Math.max(ini, km + ZONA_DESDE_MIN), b = Math.min(finDia, km + ZONA_HASTA_MIN);
+    for (let m = a; m < b; m++) marcas[m - ini] = 1;
+  }
+  let n = 0;
+  for (let i = 0; i < marcas.length; i++) {
+    if (!marcas[i]) continue;
+    const h = new Date((ini + i) * 60000).getUTCHours();
+    if (horasActivas.includes(h)) n++;
+  }
+  return n;
+}
+
+/** Intervalo del radar repartiendo lo que queda solo entre los minutos de zona útil. */
+export function intervaloPorZona(args: {
+  intervaloBase: number; disponibles: number; fraccionRadar: number; minutosZona: number;
+}): number {
+  const radares = Math.max(1, Math.floor(args.disponibles * args.fraccionRadar));
+  return Math.max(args.intervaloBase, Math.ceil(args.minutosZona / radares));
+}
+
 // ---------------- Copas: exclusión permanente por nombre ----------------
 //
 // Las copas (mundiales, nacionales, continentales, eliminatorias) no tienen el ritmo estable
@@ -331,7 +383,7 @@ export function esCopa(nombreLiga: string | null | undefined, patrones: string[]
 export type MotivoRadar =
   | "copa" | "aislada" | "sin_cuota_pre" | "aun_no_2T" | "otro_estado" | "fuera_ventana" | "empatado"
   | "favorito_no_pierde" | "sin_favorito_claro" | "sin_consultar" | "ya_alertado"
-  | "sin_cupo" | "sin_estadisticas" | "sin_cuota_vivo" | "evaluado";
+  | "sin_cupo" | "sin_estadisticas" | "sin_cuota_vivo" | "evaluado" | "sin_cobertura" | "tarde";
 
 export function motivoRadar(x: {
   copa?: boolean;                                      // competición excluida por nombre (esCopa)
@@ -340,16 +392,18 @@ export function motivoRadar(x: {
   favorito: "home" | "away" | null;
   cuotaFav: number | null;                             // cuota prepartido del favorito
   yaAlertado: boolean;
+  sinCobertura?: boolean;                              // la API (o nuestra historia) dice que la liga no trae cuotas o stats
   detalle?: "sin_estadisticas" | "sin_cuota_vivo" | "evaluado" | null;  // resultado del paso 5
 }, r: Regla): MotivoRadar {
   if (x.copa) return "copa";
   if (!x.habilitada) return "aislada";
+  if (x.sinCobertura && !x.consultada) return "sin_cobertura";
   if (x.consultada && !x.favorito) return "sin_cuota_pre";
   if (x.estado === "1H" || x.estado === "HT") return "aun_no_2T";
   if (x.estado !== "2H") return "otro_estado";
   if (x.minuto < r.minuto_min || x.minuto > r.minuto_max) return "fuera_ventana";
   if (x.gl === x.gv) return "empatado";
-  if (!x.consultada) return "sin_consultar";
+  if (!x.consultada) return x.minuto > limiteTarde(r) ? "tarde" : "sin_consultar";
   if (!(x.cuotaFav !== null && x.cuotaFav <= r.cuota_fav_max)) return "sin_favorito_claro";
   const desventaja = x.favorito === "home" ? x.gv - x.gl : x.gl - x.gv;
   if (desventaja < r.diferencia_min) return "favorito_no_pierde";

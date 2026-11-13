@@ -108,3 +108,10 @@ Cada punto reemplaza o precisa lo dicho arriba. El porqué detallado está en `D
 2. **Contabilidad (sec. 3):** un candidato cuesta ~2 consultas cada 5 min (~18 en su vida útil). En Free alcanza para 1 o 2 candidatos al día sin dejar al radar sin cuota.
 3. **Cobertura (sec. 3):** un partido con 2 respuestas seguidas sin estadísticas sale del seguimiento (`partidos.sin_stats`). Primer caso real: Reserve League de Argentina, sin estadísticas ni cuota en vivo en API-Football (verificado el 10 nov).
 4. **Esquema (sec. 5):** `partidos.sin_stats int`, `partidos.cuota_vivo_probada bool`; `config.ultimo_seguimiento`; `escaneos.motivo` admite `seguimiento`.
+
+## 11. Cambios propuestos para la versión 1.3 (13 nov 2026, pendientes de aprobación de Fredy)
+1. **Consumo (sec. 3):** se suman tres consultas "de planeación": `/leagues?current=true` (1 por semana, cobertura de cuotas y estadísticas por liga), `/fixtures?date=HOY` (1 por día, agenda) y `/odds?league&season&date&bet=1` (cuotas prepartido en bloque, 10 partidos por consulta, para ligas con 3+ partidos en el día). La consulta de a uno (`/odds?fixture`) queda solo para ligas chicas o si el bloque falla.
+2. **Agenda (reemplaza el punto 1 de la sec. 10):** el radar corre solo si algún partido de liga útil está en su zona útil (descanso → minuto ~77) y su intervalo reparte el presupuesto entre los minutos de zona que quedan en el día. El seguimiento no cambia.
+3. **Sin gasto en lo que no puede alertar:** ligas sin cobertura de cuotas o estadísticas (según la API o aprendido de la historia) y partidos vistos por primera vez después del minuto `minuto_max − momentum_gap_min`.
+4. **Esquema (sec. 5):** tablas `agenda` y `cuotas_bloque`; columnas `ligas.cob_odds`, `ligas.cob_stats`, `ligas.cob_actualizada`; vista `v_cobertura_liga`; config `usar_agenda`, `cuotas_bloque_min_partidos`, `cuotas_bloque_max_dia`, `agenda_fecha`, `cobertura_ts`; motivos de radar `sin_cobertura` y `tarde`; motivo de escaneo `previa`.
+5. **No cambia la regla:** sigue la v3. Ver DECISIONES 27.

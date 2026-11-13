@@ -156,6 +156,7 @@ function motivoInfo(mo, r) {
     sin_cuota_pre: ["cobertura", "Sin cuotas prepartido en la API"],
     sin_estadisticas: ["cobertura", "Sin estadísticas en vivo en la API"],
     sin_cuota_vivo: ["cobertura", "Sin cuota en vivo en la API"],
+    sin_cobertura: ["cobertura", "La API dice que esta liga no trae cuotas o estadísticas"],
     copa: ["aislada", "Copa (excluida siempre)"],
     aislada: ["aislada", "Liga aislada"],
     aun_no_2T: ["regla", "Aún no es el 2.º tiempo"],
@@ -165,6 +166,7 @@ function motivoInfo(mo, r) {
     favorito_no_pierde: ["regla", Number(r.diferencia_min) > 1 ? `El favorito no pierde por ${r.diferencia_min} o más` : "El favorito no va perdiendo"],
     sin_favorito_claro: ["regla", `Sin favorito claro (cuota > ${n(r.cuota_fav_max)})`],
     sin_consultar: ["regla", "Favorito aún sin consultar (cupo de API)"],
+    tarde: ["regla", `Visto tarde (pasado el ${(r.minuto_max ?? 85) - (r.momentum_gap_min ?? 8)}'): ya no alcanza a tener momentum`],
   };
   const [grupo, texto] = M[mo] || ["regla", mo || "–"];
   return { grupo, texto };
