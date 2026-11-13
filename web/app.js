@@ -145,7 +145,7 @@ function tarjetaPartido(p, cfg) {
 const GRUPOS = {
   seguimiento: { corto: "Seguimiento", titulo: "En seguimiento", ayuda: "Pasaron el filtro: el escáner les pide estadísticas y evalúa la regla." },
   cobertura: { corto: "Sin datos API", titulo: "Por fuera: la API no trae el dato", ayuda: "Huecos de API-Football en esa liga. Ningún ajuste de la regla los recupera." },
-  aislada: { corto: "Aisladas", titulo: "Por fuera: liga aislada por ti", ayuda: "Las apagaste en la pestaña Ligas." },
+  aislada: { corto: "Aisladas", titulo: "Por fuera: copas y ligas aisladas por ti", ayuda: "Las copas se descartan siempre por su nombre (Cup, Copa); las ligas, si las apagaste en la pestaña Ligas." },
   regla: { corto: "Regla", titulo: "Descartados por la regla", ayuda: "Partidos normales que todavía no cumplen (o ya no cumplen) el patrón." },
 };
 function motivoInfo(mo, r) {
@@ -156,6 +156,7 @@ function motivoInfo(mo, r) {
     sin_cuota_pre: ["cobertura", "Sin cuotas prepartido en la API"],
     sin_estadisticas: ["cobertura", "Sin estadísticas en vivo en la API"],
     sin_cuota_vivo: ["cobertura", "Sin cuota en vivo en la API"],
+    copa: ["aislada", "Copa (excluida siempre)"],
     aislada: ["aislada", "Liga aislada"],
     aun_no_2T: ["regla", "Aún no es el 2.º tiempo"],
     otro_estado: ["regla", "Prórroga, penales o pausa"],
