@@ -190,7 +190,7 @@ export async function cuotas(id: string, idLocal: string | null, idVisitante: st
 const RELLENO = new Set(["fc", "cf", "sc", "cd", "ac", "as", "ca", "club", "de", "del", "la", "el", "the", "afc", "fk",
   "sk", "nk", "if", "bk", "cs", "us", "sd", "ud", "rc", "ss", "sv", "deportivo", "atletico", "atl", "real", "city", "united", "utd"]);
 export function fichas(nombre: string): string[] {
-  return nombre.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+  return nombre.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
     .replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w && !RELLENO.has(w));
 }
 function parecido(a: string, b: string): number {
