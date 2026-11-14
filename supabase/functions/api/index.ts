@@ -56,7 +56,7 @@ const EDITABLES = new Set([
   "minuto_min", "minuto_max", "cuota_fav_max", "diferencia_min", "dominancia_min", "cuota_objetivo",
   "momentum_ventana_min", "momentum_gap_min", "pesos_ip",
   "escaneo_activo", "presupuesto_diario", "reserva_api", "intervalo_radar_min", "intervalo_seguimiento_min",
-  "horas_activas_utc", "fraccion_radar", "max_detalle_escaneo", "stake", "cuotas_siempre", "excluir_reempate", "goles_fav_max",
+  "horas_activas_utc", "fraccion_radar", "max_detalle_escaneo", "stake", "cuotas_siempre", "excluir_reempate", "excluir_roja_fav", "goles_fav_max",
 ]);
 // Claves que nunca salen por la API pública
 const OCULTAS = new Set(["token_forzar"]);
@@ -86,7 +86,7 @@ function validarValor(clave: string, v: unknown): boolean {
         .every((k) => typeof (v as any)[k] === "number" && Number.isFinite((v as any)[k]));
   }
   if (clave === "horas_activas_utc") return Array.isArray(v) && v.every((h) => Number.isInteger(h) && h >= 0 && h <= 23);
-  if (clave === "escaneo_activo" || clave === "cuotas_siempre" || clave === "excluir_reempate") return typeof v === "boolean";
+  if (clave === "escaneo_activo" || clave === "cuotas_siempre" || clave === "excluir_reempate" || clave === "excluir_roja_fav") return typeof v === "boolean";
   return typeof v === "number" && Number.isFinite(v) && v >= 0;
 }
 
@@ -355,7 +355,29 @@ async function rendimiento() {
   // Historial acumulado por liga (vista v_ligas_historial); la PWA lo agrupa por país.
   const historial = await sql`select * from futbol.v_ligas_historial
                               where precandidatos > 0 and coalesce(habilitada, true) order by candidatos desc, precandidatos desc, vistos desc`;
-  return { filas, conteo, datos, historial };
+  // Favorito local vs visitante (Fredy, 14 nov): candidatos y alertas según dónde juega el favorito.
+  // Alertas con el mismo filtro que v_rendimiento (ligas activas, dentro de la ventana de minutos).
+  const ladoAlertas = await sql`
+    select p.favorito as lado,
+           count(*) filter (where a.resultado in ('acierto','fallo'))::int as resueltas,
+           count(*) filter (where a.resultado = 'acierto')::int as aciertos,
+           round(sum(case when a.resultado = 'acierto' then a.cuota - 1 when a.resultado = 'fallo' then -1 end), 2) as ganancia_u
+    from futbol.alertas a join futbol.partidos p using (fixture_id) left join futbol.ligas l on l.id = p.liga_id
+    where coalesce(l.habilitada, true) and p.favorito in ('home', 'away')
+      and a.minuto between coalesce((select (valor #>> '{}')::int from futbol.config where clave = 'minuto_min'), 0)
+                       and coalesce((select (valor #>> '{}')::int from futbol.config where clave = 'minuto_max'), 200)
+    group by 1`;
+  const ladoCand = await sql`
+    select c.favorito as lado, count(*)::int as candidatos,
+           count(*) filter (where c.resultado = 'gol')::int as con_gol,
+           count(*) filter (where c.resultado = 'sin_gol')::int as sin_gol
+    from futbol.v_candidatos c join futbol.partidos p using (fixture_id) left join futbol.ligas l on l.id = p.liga_id
+    where coalesce(l.habilitada, true) and c.favorito in ('home', 'away') group by 1`;
+  const lado = ["home", "away"].map((k) => ({
+    lado: k, ...(ladoCand.find((x: any) => x.lado === k) ?? { candidatos: 0, con_gol: 0, sin_gol: 0 }),
+    ...(ladoAlertas.find((x: any) => x.lado === k) ?? { resueltas: 0, aciertos: 0, ganancia_u: 0 }),
+  }));
+  return { filas, conteo, datos, historial, lado };
 }
 
 // Pestaña Candidatos (DECISIONES 32): partidos que pasaron el filtro, con su desenlace (¿hubo un gol

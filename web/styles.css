@@ -437,3 +437,19 @@ p.marcada { display: block; }
 .tut-decide p { color: #c9d6ce; margin-bottom: 6px; }
 .tut-importante { border-color: var(--ambar); }
 .tut-importante b { color: var(--ambar); }
+
+/* Ahora: alertas abiertas muy visibles y lista simple de partidos en vivo */
+.tarjeta.abierta { background: linear-gradient(160deg, #123d27 0%, #14201b 55%); box-shadow: 0 0 0 3px rgba(61, 220, 132, .18), 0 8px 26px rgba(61, 220, 132, .12); }
+.tarjeta.abierta .vivo::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor; margin-right: 6px; vertical-align: 1px; animation: latido 1.2s ease-in-out infinite; }
+@keyframes latido { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .tarjeta.abierta .vivo::before { animation: none; } }
+.lista-vivo { padding: 2px 12px; }
+.vfila { display: grid; grid-template-columns: 44px 1fr auto; grid-template-areas: "min eq goles" "min cumple goles"; align-items: center; column-gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--linea); }
+.vfila:last-child { border-bottom: 0; }
+.vmin { grid-area: min; color: var(--cesped); font-size: 13px; }
+.vequipos { grid-area: eq; display: flex; flex-direction: column; min-width: 0; font-size: 14px; }
+.vequipos span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vgoles { grid-area: goles; text-align: right; font-size: 15px; line-height: 1.35; }
+.vfav { font-style: normal; color: var(--ambar); font-size: 11px; }
+.vcumple { grid-area: cumple; justify-self: start; margin-top: 3px; font-size: 11px; font-weight: 700; color: #04130b; background: var(--ambar); border-radius: 10px; padding: 1px 8px; }
+.vfila.cumple .vequipos { font-weight: 600; }
