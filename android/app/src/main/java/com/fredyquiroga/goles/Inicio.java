@@ -53,6 +53,6 @@ public class Inicio extends Activity {
         sv.addView(l);
         setContentView(sv);
 
-        try { GolesWidget.programar(this); } catch (Throwable t) { Diagnostico.guardar(this, "programar", t); }
+        try { GolesWidget.programar(this); } catch (Throwable ex) { Diagnostico.guardar(this, "programar", ex); }
     }
 }
