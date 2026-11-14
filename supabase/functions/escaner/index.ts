@@ -293,7 +293,7 @@ Deno.serve(async (req) => {
   let agenda: { hay: boolean; kickoffs: number[] } = { hay: false, kickoffs: [] };
   if (cfg.usar_agenda === true && (enHorario || forzar)) {
     try {
-      await cargarCobertura(api, cfg, pre);
+      if (!modoFS) await cargarCobertura(api, cfg, pre);
       await cargarAgenda(api, hoy, regla, pre);
       agenda = await kickoffsUtiles(hoy, regla);
       if (!modoFS) await cuotasEnBloque(api, cfg, hoy, pre);
