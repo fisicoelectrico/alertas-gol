@@ -59,6 +59,7 @@ function reglaDesde(cfg: Config): A.Regla {
     momentum_ventana_min: Number(cfg.momentum_ventana_min),
     momentum_gap_min: Number(cfg.momentum_gap_min),
     pesos_ip: cfg.pesos_ip,
+    excluir_reempate: cfg.excluir_reempate === true,
     patrones_copa: Array.isArray(cfg.patrones_copa) ? cfg.patrones_copa : ["cup", "copa", "coupe", "taça", "pokal", "coppa", "trophy", "libertadores", "sudamericana", "champions league", "friendly", "amistoso"],
   };
 }
@@ -399,7 +400,7 @@ Deno.serve(async (req) => {
           gl: f.goals.home ?? 0, gv: f.goals.away ?? 0,
           habilitada: i?.habilitada ?? true, consultada: !!(p?.cuota_pre_consultada ?? i?.cuota_pre_consultada),
           favorito, cuotaFav: Number.isFinite(cuotaFav) ? cuotaFav : null,
-          yaAlertado: yaAlertados.has(id), detalle: (resultadoDetalle.get(id) ?? null) as any,
+          yaAlertado: yaAlertados.has(id), reempate: !!i?.reempate, detalle: (resultadoDetalle.get(id) ?? null) as any,
           sinCobertura: !!(i?.liga_sin_cuota || i?.liga_sin_stats),
         }, regla);
         return {
@@ -503,6 +504,19 @@ Deno.serve(async (req) => {
       from futbol.partidos p left join futbol.ligas l on l.id = p.liga_id
       left join futbol.v_cobertura_liga c on c.liga_id = p.liga_id
       where p.fixture_id = any(${ids}::int[])`) { info.set(f.fixture_id, f); favs.set(f.fixture_id, f); }
+    // Regla v6 (DECISIONES 34): historial de goles para saber si el favorito ya empató y le volvieron a marcar.
+    // Sale de futbol.cambios_marcador (lo llena un trigger con cada ciclo), no gasta consultas.
+    if (regla.excluir_reempate) {
+      const porId = new Map<number, any[]>();
+      for (const c of await sql`select fixture_id, gl_antes, gv_antes, gl, gv from futbol.cambios_marcador
+                                where fixture_id = any(${ids}::int[]) order by ts`) {
+        (porId.get(c.fixture_id) ?? porId.set(c.fixture_id, []).get(c.fixture_id)!).push(c);
+      }
+      for (const id of ids) {
+        const i = info.get(id);
+        if (i) i.reempate = A.reempateRoto(porId.get(id) ?? [], i.favorito);
+      }
+    }
   };
 
   // ¿Este fixture es candidato ahora mismo? (sin consultas: radar/fixture + cuota prepartido en caché)
@@ -516,7 +530,7 @@ Deno.serve(async (req) => {
     if (yaAlertados.has(f.fixture.id)) return false; // ya alertado con esta versión: solo se espera la resolución
     return A.filtroCandidato({
       estado: f.fixture.status.short, minuto: f.fixture.status.elapsed ?? 0,
-      goles_local: f.goals.home ?? 0, goles_visitante: f.goals.away ?? 0, favorito: p.favorito,
+      goles_local: f.goals.home ?? 0, goles_visitante: f.goals.away ?? 0, favorito: p.favorito, reempate: !!i?.reempate,
     }, regla).ok;
   };
   // Poka-yoke de presupuesto: si la API ya respondió 2 veces seguidas sin estadísticas para este
@@ -620,7 +634,7 @@ Deno.serve(async (req) => {
       }
 
       const ev = A.evaluar({
-        ctx: { estado: f.fixture.status.short, minuto, goles_local: gl, goles_visitante: gv, favorito: fav },
+        ctx: { estado: f.fixture.status.short, minuto, goles_local: gl, goles_visitante: gv, favorito: fav, reempate: !!info.get(id)?.reempate },
         regla, dominancia, momentum, cuotaOver,
       });
       const [snap] = await sql`
