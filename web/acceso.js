@@ -301,7 +301,10 @@ Object.assign(pantallas, {
     const m = metricas(lista);
     let filtro = (() => { try { return localStorage.getItem("filtroHist") || "todas"; } catch (_) { return "todas"; } })();
     if (!YO) filtro = "todas";
-    const cerradas = lista.filter((a) => a.resultado === "acierto" || a.resultado === "fallo");
+    // Solo las alertas dentro de la ventana de minutos de la regla vigente (las demás no cuentan en el yield)
+    const todasCerradas = lista.filter((a) => a.resultado === "acierto" || a.resultado === "fallo");
+    const cerradas = todasCerradas.filter((a) => a.en_ventana);
+    const fuera = todasCerradas.length - cerradas.length;
     const vis = filtro === "mias" ? cerradas.filter((a) => a.mi_decision === "entre") : cerradas;
     setTimeout(() => document.querySelectorAll(".filtro[data-h]").forEach((b) => b.addEventListener("click", () => {
       try { localStorage.setItem("filtroHist", b.dataset.h); } catch (_) {}
@@ -322,7 +325,8 @@ Object.assign(pantallas, {
       </div>
       ${m.yield != null ? `<p class="nota explica">Por cada $100 entrados en todas, el radar va ${signo} $${coma(Math.abs(m.yield), 2)}.</p>` : ""}
       ${YO ? `<div class="filtros"><button class="filtro ${filtro === "todas" ? "on" : ""}" data-h="todas">Todas</button><button class="filtro ${filtro === "mias" ? "on" : ""}" data-h="mias">Donde entré</button></div>` : ""}
-      <div class="tarjeta lista-hist">${vis.map(fila).join("") || `<p class="vacio">${filtro === "mias" ? "Todavía no has marcado entradas cerradas." : "Todavía no hay alertas cerradas."}</p>`}</div>`;
+      <div class="tarjeta lista-hist">${vis.map(fila).join("") || `<p class="vacio">${filtro === "mias" ? "Todavía no has marcado entradas cerradas." : "Todavía no hay alertas cerradas."}</p>`}</div>
+      ${fuera && esAdmin() ? `<p class="nota">${fuera} alerta${fuera === 1 ? "" : "s"} fuera de la ventana de minutos no se muestra${fuera === 1 ? "" : "n"} ni cuenta${fuera === 1 ? "" : "n"}. Están en Control → Alertas técnicas.</p>` : ""}`;
   },
 
   async banca() {

@@ -8,12 +8,12 @@
 // Botones Entré / No entro (spec 1.6): el service worker marca la entrada sin abrir la app.
 // Lee la URL de la API de config.js y el token de sesión de IndexedDB (localStorage no existe aquí).
 importScripts("config.js");
-const VERSION = "v12";
+const VERSION = "v13";
 const CACHE = `alertas-gol-${VERSION}`;
 const CASCARON = ["./", "index.html", "styles.css", "marca.js", "app.js", "acceso.js", "config.js", "manifest.webmanifest", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CASCARON)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CASCARON.map((u) => new Request(u, { cache: "reload" })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {
@@ -29,7 +29,9 @@ self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET" || url.origin !== self.location.origin) return; // la API va directo a la red
   // "Red primero, caché de respaldo": siempre la última versión si hay internet.
   e.respondWith(
-    fetch(e.request)
+    // no-cache: revalida con el servidor y no usa la copia del navegador (GitHub Pages la guarda 10 min,
+    // por eso un cambio de estilos podía tardar en verse)
+    fetch(e.request.url, { cache: "no-cache", credentials: "same-origin" })
       .then((res) => {
         if (res.ok) { const copia = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copia)); }
         return res;
