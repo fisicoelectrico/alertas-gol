@@ -106,6 +106,12 @@ function pantallaEntrar(token, error) {
   });
 }
 
+async function usarSesion(r) {
+  await guardarSesion(r.sesion);
+  YO = r.usuario; avisoInvalida = false;
+  if ("Notification" in window && Notification.permission === "granted") resuscribir();
+}
+
 // Si ya había permiso de notificaciones, la suscripción se vuelve a ligar a la persona
 async function resuscribir() {
   try {
@@ -320,7 +326,14 @@ Object.assign(pantallas, {
   },
 
   async banca() {
-    if (!YO) return `<div class="tarjeta vacio"><strong>Tu banca es personal</strong>Entra con tu enlace personal para llevar tus entradas y tu yield.</div>`;
+    if (!YO) {
+      setTimeout(() => $("#btn-vincular")?.addEventListener("click", async () => {
+        const r = await conPin((pin) => post("/admin/vincular", { pin }));
+        if (r) { await usarSesion(r); toast(`Listo, ${r.usuario.nombre}: este celular quedó como tuyo`); arrancar(); }
+      }));
+      return `<div class="tarjeta vacio"><strong>Tu banca es personal</strong>Entra con tu enlace personal para llevar tus entradas y tu yield.
+        ${MODO === "abierto" ? `<div class="botones" style="justify-content:center"><button class="btn sec" id="btn-vincular">Soy el administrador: usar mi PIN</button></div>` : ""}</div>`;
+    }
     const b = await get("/mi-banca");
     const y = b.yo, r = b.radar;
     setTimeout(() => {
@@ -486,6 +499,11 @@ async function arrancar(despuesDeEntrar = false) {
     MODO = yo.modo_acceso; YO = yo.usuario;
     if (yo.sesion_invalida) { await borrarSesion(); if (!avisoInvalida) toast("Tu acceso ya no es válido. Pídele a Fredy un enlace nuevo."); }
   } catch (_) { /* sin red: se intenta con lo que haya */ }
+  // Administrador con el PIN guardado en este celular: se liga solo a su usuario, sin enlace
+  if (!YO && pinGuardado()) {
+    try { const r = await post("/admin/vincular", { pin: pinGuardado() }); await usarSesion(r); }
+    catch (e) { if (/PIN/i.test(e.message)) try { localStorage.removeItem("pin"); } catch (_) {} }
+  }
   if (!YO && MODO === "cerrado") return pantallaEntrar(null);
   $(".barra").hidden = false;
   pintarMarco();

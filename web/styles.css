@@ -453,3 +453,8 @@ p.marcada { display: block; }
 .vfav { font-style: normal; color: var(--ambar); font-size: 11px; }
 .vcumple { grid-area: cumple; justify-self: start; margin-top: 3px; font-size: 11px; font-weight: 700; color: #04130b; background: var(--ambar); border-radius: 10px; padding: 1px 8px; }
 .vfila.cumple .vequipos { font-weight: 600; }
+
+/* Interruptores: tamaño fijo (la regla .campo label los estiraba a todo el ancho) */
+.campo label.sw { flex: none; width: 52px; height: 30px; }
+.campo label.sw span::after { top: 3px; left: 3px; width: 22px; height: 22px; }
+.campo label.sw input:checked + span::after { transform: translateX(22px); }
