@@ -40,7 +40,7 @@
 // =====================================================================
 import { sql, leerConfig } from "../_shared/db.ts";
 import { notificar } from "../_shared/notificar.ts";
-import { canjear, enlaceNuevo, leerSesion, modoAcceso, normalizarTelefono, Sesion } from "../_shared/acceso.ts";
+import { canjear, enlaceNuevo, leerSesion, modoAcceso, normalizarTelefono, Sesion, sha256, tokenNuevo } from "../_shared/acceso.ts";
 import { estadoPresupuesto } from "../_shared/apifootball.ts";
 
 const CORS = {
@@ -559,6 +559,17 @@ Deno.serve(async (req) => {
         if (!v.ok) return json({ error: v.error }, 401);
       }
       if (ruta === "/admin/verificar") return json({ ok: true });
+      // El administrador que ya tiene el PIN en su celular no necesita enlace: el PIN liga ese celular a su
+      // usuario admin (para Mi banca, sus entradas y sus avisos). No revoca sus otras sesiones.
+      if (ruta === "/admin/vincular") {
+        const [u] = await sql`select id, nombre, rol, banca_inicial from futbol.usuarios where rol = 'admin' and activo order by id limit 1`;
+        if (!u) return json({ error: "No hay un administrador activo" }, 400);
+        const sesion = tokenNuevo();
+        await sql`insert into futbol.sesiones (usuario_id, token_hash, dispositivo)
+                  values (${u.id}, ${await sha256(sesion)}, ${req.headers.get("user-agent")?.slice(0, 300) ?? null})`;
+        await sql`update futbol.usuarios set ultimo_acceso = now() where id = ${u.id}`;
+        return json({ ok: true, sesion, usuario: { id: Number(u.id), nombre: u.nombre, rol: u.rol, banca_inicial: u.banca_inicial == null ? null : Number(u.banca_inicial) } });
+      }
       if (ruta === "/admin/config") {
         const r = await cambiarConfig(body.cambios, body.nota);
         return json(r, (r as any).error ? 400 : 200);
