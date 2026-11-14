@@ -5,7 +5,7 @@
 //  2) Guardar el cascarón de la app (HTML/CSS/JS) para que abra al instante y sin red.
 // Los DATOS nunca se guardan en caché: siempre se piden frescos a la API.
 // =====================================================================
-const VERSION = "v7";
+const VERSION = "v8";
 const CACHE = `alertas-gol-${VERSION}`;
 const CASCARON = ["./", "index.html", "styles.css", "app.js", "config.js", "manifest.webmanifest", "icons/icon-192.png"];
 
@@ -37,8 +37,8 @@ self.addEventListener("fetch", (e) => {
 
 self.addEventListener("push", (e) => {
   let d = {};
-  try { d = e.data ? e.data.json() : {}; } catch (_) { d = { titulo: "Alertas de Gol", cuerpo: e.data ? e.data.text() : "" }; }
-  e.waitUntil(self.registration.showNotification(d.titulo || "Alertas de Gol", {
+  try { d = e.data ? e.data.json() : {}; } catch (_) { d = { titulo: "ADN Soccer", cuerpo: e.data ? e.data.text() : "" }; }
+  e.waitUntil(self.registration.showNotification(d.titulo || "ADN Soccer", {
     body: d.cuerpo || "",
     icon: "icons/icon-192.png",
     badge: "icons/badge-96.png",

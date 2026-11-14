@@ -1,5 +1,5 @@
 // =====================================================================
-// Alertas de Gol · frontend
+// ADN Soccer · frontend
 // Sin frameworks: cada pantalla es una función que pide JSON a la Edge Function
 // `api` y devuelve HTML. El enrutado es por hash (#vivo, #alertas…), así funciona
 // igual en GitHub Pages, en un subdominio o abierta desde el ícono de la PWA.

@@ -30,7 +30,7 @@ public class Inicio extends Activity {
         l.addView(t);
 
         Button abrir = new Button(this);
-        abrir.setText("Abrir Alertas de Gol");
+        abrir.setText("Abrir ADN Soccer");
         abrir.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(GolesWidget.PWA))));
         l.addView(abrir);
         // Caja negra: si algo falló, se muestra aquí para poder enviar una captura.
