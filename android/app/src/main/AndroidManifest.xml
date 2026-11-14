@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Único permiso: internet, para leer /api/widget (datos públicos, sin llaves). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="Goles widget"
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <!-- Pantalla mínima: explica cómo poner el widget y abre la PWA. -->
+        <activity android:name=".Inicio" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- El widget: Android le manda APPWIDGET_UPDATE; ACTUALIZAR es el botón ⟳ del propio widget. -->
+        <receiver android:name=".GolesWidget" android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/goles_widget" />
+        </receiver>
+
+        <!-- Tarea periódica (cada 15 min, el mínimo que permite Android) que refresca el widget. -->
+        <service android:name=".Refresco"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
+    </application>
+</manifest>

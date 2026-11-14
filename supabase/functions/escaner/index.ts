@@ -766,8 +766,23 @@ Deno.serve(async (req) => {
         }
       }
       await detallarCandidatos(candidatosFS, conStatsFS);
+      // La foto incluye también los partidos en vivo de Flashscore que no tienen pareja en API-Football:
+      // así la lista del Radar suma lo mismo que el conteo `vivos`. No se pueden evaluar (sin fixture
+      // no hay cuota en vivo), por eso van con motivo "sin_cruce".
+      const enLista = new Set(enVivo.map((f) => f.__fs.id));
+      const sinCruce = vivosFS.filter((p) => p.estado === 2 && !enLista.has(p.id)).map((p) => {
+        const em = FS.estadoYMinuto(p);
+        const [paisFS, resto] = p.liga.includes(": ") ? p.liga.split(/: (.*)/s) : [null, p.liga];
+        return {
+          id: `fs:${p.id}`, lg: 0, liga: (resto ?? p.liga).replace(/ - .*$/, ""),
+          pais: paisFS ? paisFS.charAt(0) + paisFS.slice(1).toLowerCase() : null,
+          l: p.local, v: p.visitante, e: em.estado, m: em.minuto, gl: p.gl, gv: p.gv,
+          fav: null, cf: null, mo: "sin_cruce",
+        };
+      });
+      const foto = fotoRadar();
       return await bitacora("fs", { vivos, candidatos: candidatosN, llamadas: api.llamadas, alertas: alertasNuevas, resueltas, detalle,
-        radar: fotoRadar() });
+        radar: foto ? [...foto, ...sinCruce] : null });
     }
 
     if (modo === "seguimiento") {

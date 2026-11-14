@@ -1,0 +1,39 @@
+// App mínima: solo el widget de pantalla de inicio. Sin librerías externas (ni AndroidX):
+// todo usa el framework de Android, así el APK pesa ~30 KB y no hay dependencias que mantener.
+plugins { id "com.android.application" }
+
+android {
+    namespace "com.fredyquiroga.goles"
+    compileSdk 35
+    defaultConfig {
+        applicationId "com.fredyquiroga.goles.widget"
+        minSdk 26
+        targetSdk 35
+        // El número de versión lo pone GitHub Actions (número de ejecución) para que cada APK actualice al anterior
+        versionCode (System.getenv("VERSION_CODE") ?: "1").toInteger()
+        versionName "1." + (System.getenv("VERSION_CODE") ?: "0")
+    }
+    signingConfigs {
+        // Firma fija: si cambia, Android no deja actualizar y toca desinstalar. Ver android/README.md.
+        fijo {
+            storeFile file("../goles-widget.keystore")
+            storePassword "alertasgol"
+            keyAlias "goles"
+            keyPassword "alertasgol"
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.fijo
+        }
+    }
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

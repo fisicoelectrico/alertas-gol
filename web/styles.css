@@ -219,3 +219,10 @@ td .sub { display: block; color: var(--tenue); font-size: 11px; }
 .hliga .hn { font-size: 13px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* Resumen compacto arriba de "En vivo" (mismo dato que el widget de Android) */
+.resumen-top { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; text-decoration: none; margin-bottom: 14px; }
+.resumen-top .grande { font-size: 30px; font-weight: 700; line-height: 1; display: block; }
+.resumen-top span { color: var(--tenue); font-size: 13px; }
+.resumen-top .si .grande { color: var(--ambar); }
+.resumen-top small { grid-column: 1 / -1; color: var(--tenue); font-size: 12px; }
