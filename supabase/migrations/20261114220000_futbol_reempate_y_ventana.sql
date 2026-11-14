@@ -5,6 +5,10 @@ insert into futbol.config (clave, valor, descripcion, es_regla)
 values ('excluir_reempate', 'false'::jsonb,
         'Fuera del radar si el favorito empató viniendo de atrás y le volvieron a marcar', true)
 on conflict (clave) do nothing;
+-- Goles máximos que puede llevar el favorito para ser candidato (1 → entra 1-3, no 2-3). 99 = sin límite.
+insert into futbol.config (clave, valor, descripcion, es_regla)
+values ('goles_fav_max', '99'::jsonb, 'Goles máximos que puede llevar el favorito para ser candidato (99 = sin límite)', true)
+on conflict (clave) do nothing;
 
 -- 2) Las métricas solo cuentan alertas dentro de la ventana de minutos vigente (minuto_min–minuto_max).
 --    Es un filtro: si se amplía la ventana, las alertas vuelven a contar. Snapshots y alertas no se tocan.

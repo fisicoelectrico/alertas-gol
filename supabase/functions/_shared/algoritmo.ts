@@ -42,6 +42,7 @@ export interface Regla {
   momentum_gap_min: number;
   pesos_ip: Pesos;
   patrones_copa: string[];   // nombres de competición que se descartan siempre (v3)
+  goles_fav_max: number;     // v6: goles que puede llevar el favorito (1 → entra 1-3, no entra 2-3); 99 = sin límite
   excluir_reempate: boolean; // v6: fuera si el favorito empató viniendo de atrás y le volvieron a marcar
 }
 
@@ -228,6 +229,8 @@ export function filtroCandidato(c: Contexto, r: Regla): { ok: boolean; motivo?: 
   if (c.minuto < r.minuto_min || c.minuto > r.minuto_max) return { ok: false, motivo: "fuera_de_ventana", desventaja };
   if (!c.favorito) return { ok: false, motivo: "sin_favorito", desventaja };
   if (desventaja < r.diferencia_min) return { ok: false, motivo: "favorito_no_pierde", desventaja };
+  const golesFav = c.favorito === "home" ? c.goles_local : c.goles_visitante;
+  if (golesFav > r.goles_fav_max) return { ok: false, motivo: "fav_con_goles", desventaja };
   if (r.excluir_reempate && c.reempate) return { ok: false, motivo: "reempate", desventaja };
   return { ok: true, desventaja };
 }
@@ -410,7 +413,7 @@ export function esCopa(nombreLiga: string | null | undefined, patrones: string[]
 export type MotivoRadar =
   | "copa" | "aislada" | "sin_cuota_pre" | "aun_no_2T" | "otro_estado" | "fuera_ventana" | "empatado"
   | "favorito_no_pierde" | "sin_favorito_claro" | "sin_consultar" | "ya_alertado"
-  | "sin_cupo" | "sin_estadisticas" | "sin_cuota_vivo" | "evaluado" | "sin_cobertura" | "tarde" | "reempate";
+  | "sin_cupo" | "sin_estadisticas" | "sin_cuota_vivo" | "evaluado" | "sin_cobertura" | "tarde" | "reempate" | "fav_con_goles";
 
 export function motivoRadar(x: {
   copa?: boolean;                                      // competición excluida por nombre (esCopa)
@@ -435,6 +438,7 @@ export function motivoRadar(x: {
   if (!(x.cuotaFav !== null && x.cuotaFav <= r.cuota_fav_max)) return "sin_favorito_claro";
   const desventaja = x.favorito === "home" ? x.gv - x.gl : x.gl - x.gv;
   if (desventaja < r.diferencia_min) return "favorito_no_pierde";
+  if ((x.favorito === "home" ? x.gl : x.gv) > r.goles_fav_max) return "fav_con_goles";
   if (r.excluir_reempate && x.reempate) return "reempate";
   if (x.yaAlertado) return "ya_alertado";
   return x.detalle ?? "sin_cupo";

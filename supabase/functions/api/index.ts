@@ -43,7 +43,7 @@ const EDITABLES = new Set([
   "minuto_min", "minuto_max", "cuota_fav_max", "diferencia_min", "dominancia_min", "cuota_objetivo",
   "momentum_ventana_min", "momentum_gap_min", "pesos_ip",
   "escaneo_activo", "presupuesto_diario", "reserva_api", "intervalo_radar_min", "intervalo_seguimiento_min",
-  "horas_activas_utc", "fraccion_radar", "max_detalle_escaneo", "stake", "cuotas_siempre", "excluir_reempate",
+  "horas_activas_utc", "fraccion_radar", "max_detalle_escaneo", "stake", "cuotas_siempre", "excluir_reempate", "goles_fav_max",
 ]);
 // Claves que nunca salen por la API pública
 const OCULTAS = new Set(["token_forzar"]);
@@ -172,7 +172,7 @@ async function radar() {
   const cfg = await leerConfig();
   return { ultimo: ultimo ?? null, historial, ligas, horas_activas_utc: cfg.horas_activas_utc,
            minuto_min: cfg.minuto_min, minuto_max: cfg.minuto_max, cuota_fav_max: cfg.cuota_fav_max,
-           diferencia_min: cfg.diferencia_min };
+           diferencia_min: cfg.diferencia_min, goles_fav_max: cfg.goles_fav_max };
 }
 
 async function alertas() {

@@ -165,6 +165,7 @@ function motivoInfo(mo, r) {
     fuera_ventana: ["regla", `Fuera de la ventana ${r.minuto_min ?? 46}'–${r.minuto_max ?? 85}'`],
     empatado: ["regla", "Empatado"],
     reempate: ["regla", "El favorito ya empató y le volvieron a marcar"],
+    fav_con_goles: ["regla", `El favorito ya lleva más de ${r.goles_fav_max ?? 1} gol(es)`],
     favorito_no_pierde: ["regla", Number(r.diferencia_min) > 1 ? `El favorito no pierde por ${r.diferencia_min} o más` : "El favorito no va perdiendo"],
     sin_favorito_claro: ["regla", `Sin favorito claro (cuota > ${n(r.cuota_fav_max)})`],
     sin_consultar: ["regla", "Favorito aún sin consultar (cupo de API)"],
@@ -597,7 +598,7 @@ const pantallas = {
 
       <div class="titulo-seccion"><h2>Regla ${esc(P.regla_version?.valor)}</h2><small>cambiar algo crea una versión nueva</small></div>
       <div class="tarjeta">
-        ${["minuto_min", "minuto_max", "cuota_fav_max", "diferencia_min", "dominancia_min", "cuota_objetivo", "momentum_ventana_min", "momentum_gap_min"].map((k) => campoNum(k)).join("")}
+        ${["minuto_min", "minuto_max", "cuota_fav_max", "diferencia_min", "dominancia_min", "cuota_objetivo", "momentum_ventana_min", "momentum_gap_min", ...(P.goles_fav_max ? ["goles_fav_max"] : [])].map((k) => campoNum(k)).join("")}
         ${P.excluir_reempate ? `<div class="campo"><label for="p-excluir_reempate">Excluir reempate roto<small>${esc(P.excluir_reempate.descripcion || "")}</small></label>
           <label class="sw"><input id="p-excluir_reempate" type="checkbox" data-k="excluir_reempate" data-tipo="bool" ${P.excluir_reempate.valor ? "checked" : ""}><span></span></label></div>` : ""}
         ${Object.keys(pesos).sort().map((k) => `<div class="campo"><label for="w-${k}">peso · ${esc(k)}<small>Peso en el Índice de Presión</small></label>
