@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="@drawable/fondo" android:padding="12dp">
+
+    <LinearLayout android:id="@+id/cabecera"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:id="@+id/vivos" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="–" android:textColor="#E8F0EA" android:textSize="26sp" android:textStyle="bold" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text=" en vivo   " android:textColor="#8EA398" android:textSize="13sp" />
+        <TextView android:id="@+id/candidatos" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="–" android:textColor="#E8F0EA" android:textSize="26sp" android:textStyle="bold" />
+        <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:text=" candidatos" android:textColor="#8EA398" android:textSize="13sp" />
+        <TextView android:id="@+id/actualizar" android:layout_width="36dp" android:layout_height="36dp"
+            android:gravity="center" android:text="⟳" android:textColor="#3DDC84" android:textSize="20sp" />
+    </LinearLayout>
+
+    <TextView android:id="@+id/hora" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="cargando…" android:textColor="#8EA398" android:textSize="11sp" android:paddingBottom="6dp" />
+
+    <ListView android:id="@+id/lista" android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:divider="@null" android:dividerHeight="0dp" />
+
+    <TextView android:id="@+id/lista_simple" android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:textColor="#E8F0EA" android:textSize="12sp" android:visibility="gone" />
+
+    <TextView android:id="@+id/vacio" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Sin partidos en vivo en el último radar" android:textColor="#8EA398"
+        android:textSize="12sp" android:visibility="gone" />
+</LinearLayout>

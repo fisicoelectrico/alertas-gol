@@ -10,6 +10,7 @@
 //
 // Rutas (todas bajo /functions/v1/api):
 //   GET  /resumen        pantalla "En vivo" + estado del escáner
+//   GET  /widget         conteo y lista compacta para el widget de Android
 //   GET  /radar          pestaña "Radar": todos los partidos en vivo del último barrido y por qué se descartan
 //   GET  /alertas        pendientes y resueltas
 //   GET  /rendimiento    acierto vs implícita, ROI (v_rendimiento) + historial por liga (v_ligas_historial)
@@ -90,7 +91,7 @@ async function resumen() {
        or exists (select 1 from futbol.alertas a where a.fixture_id = p.fixture_id and a.resultado = 'pendiente')
     order by p.minuto desc nulls last`;
   const [ultimo] = await sql`select ts, motivo, partidos_vivos, candidatos, llamadas, alertas, resueltas, detalle
-                             from futbol.escaneos where motivo <> 'seguimiento' order by ts desc limit 1`;
+                             from futbol.escaneos where motivo not in ('seguimiento', 'previa') order by ts desc limit 1`;
   const [ultimoSeg] = await sql`select ts, candidatos, llamadas, alertas, detalle
                                 from futbol.escaneos where motivo = 'seguimiento' order by ts desc limit 1`;
   return {
@@ -100,6 +101,22 @@ async function resumen() {
     regla_version: cfg.regla_version, escaneo_activo: cfg.escaneo_activo,
     horas_activas_utc: cfg.horas_activas_utc, cuota_objetivo: cfg.cuota_objetivo, dominancia_min: cfg.dominancia_min,
   };
+}
+
+// Widget de Android y resumen compacto: lo mínimo para pintar "N en vivo · M candidatos" y la lista.
+// Lee la última foto del radar (no gasta consultas de API-Football) y marca como candidato lo que
+// el escáner tiene en seguimiento o con alerta pendiente. Respuesta chica (~100 bytes por partido).
+async function widget() {
+  const [u] = await sql`select ts, partidos_vivos, candidatos, radar from futbol.escaneos
+                        where radar is not null order by ts desc limit 1`;
+  if (!u) return { ts: null, vivos: 0, candidatos: 0, partidos: [] };
+  const segs = new Set((await sql`
+    select fixture_id from futbol.partidos where seguimiento
+    union select fixture_id from futbol.alertas where resultado = 'pendiente'`).map((r: any) => String(r.fixture_id)));
+  const partidos = (u.radar ?? []).map((p: any) => ({
+    e: p.e, m: p.m, l: p.l, v: p.v, gl: p.gl, gv: p.gv, fav: p.fav, liga: p.liga, c: segs.has(String(p.id)),
+  })).sort((a: any, b: any) => Number(b.c) - Number(a.c) || (b.m ?? -1) - (a.m ?? -1));
+  return { ts: u.ts, vivos: u.partidos_vivos ?? partidos.length, candidatos: partidos.filter((p: any) => p.c).length, partidos };
 }
 
 // Pestaña Radar. No llama a API-Football: lee la foto que el escáner guardó en su último barrido.
@@ -215,6 +232,7 @@ Deno.serve(async (req) => {
       if (ruta === "/resumen") return json(await resumen());
       if (ruta === "/alertas") return json(await alertas());
       if (ruta === "/radar") return json(await radar());
+      if (ruta === "/widget") return json(await widget());
       if (ruta === "/rendimiento") return json(await rendimiento());
       if (ruta === "/ligas") return json(await ligas());
       if (ruta === "/config") return json(await config());

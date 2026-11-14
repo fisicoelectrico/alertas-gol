@@ -156,6 +156,8 @@ function motivoInfo(mo, r) {
     sin_cuota_pre: ["cobertura", "Sin cuotas prepartido en la API"],
     sin_estadisticas: ["cobertura", "Sin estadísticas en vivo en la API"],
     sin_cuota_vivo: ["cobertura", "Sin cuota en vivo en la API"],
+    sin_cruce: ["cobertura", "Solo en Flashscore: sin partido equivalente en API-Football (no hay cuota en vivo)"],
+    sin_cobertura: ["cobertura", "La API dice que esta liga no trae cuotas o estadísticas"],
     copa: ["aislada", "Copa (excluida siempre)"],
     aislada: ["aislada", "Liga aislada"],
     aun_no_2T: ["regla", "Aún no es el 2.º tiempo"],
@@ -165,6 +167,7 @@ function motivoInfo(mo, r) {
     favorito_no_pierde: ["regla", Number(r.diferencia_min) > 1 ? `El favorito no pierde por ${r.diferencia_min} o más` : "El favorito no va perdiendo"],
     sin_favorito_claro: ["regla", `Sin favorito claro (cuota > ${n(r.cuota_fav_max)})`],
     sin_consultar: ["regla", "Favorito aún sin consultar (cupo de API)"],
+    tarde: ["regla", `Visto tarde (pasado el ${(r.minuto_max ?? 85) - (r.momentum_gap_min ?? 8)}'): ya no alcanza a tener momentum`],
   };
   const [grupo, texto] = M[mo] || ["regla", mo || "–"];
   return { grupo, texto };
@@ -266,7 +269,12 @@ const pantallas = {
       : `<div class="tarjeta vacio"><strong>Sin candidatos ahora</strong>
            Un candidato es un favorito que va perdiendo en el segundo tiempo.
            ${enHorario ? "El radar sigue buscando." : `El radar está fuera de su horario activo (${esc(resumirHoras(horas))}); se reanuda solo.`}</div>`;
-    return `<div class="titulo-seccion"><h2>Candidatos en seguimiento</h2><small>${r.en_vivo.length}</small></div>
+    // Resumen compacto (lo mismo que muestra el widget de Android): toca para abrir la lista completa
+    const resumenTop = u ? `<a class="tarjeta resumen-top" href="#radar">
+        <div><b class="num grande">${u.partidos_vivos ?? 0}</b><span>en vivo</span></div>
+        <div class="${r.en_vivo.length ? "si" : ""}"><b class="num grande">${r.en_vivo.length}</b><span>candidatos</span></div>
+        <small>${hace(u.ts)} · ver lista ›</small></a>` : "";
+    return `${resumenTop}<div class="titulo-seccion"><h2>Candidatos en seguimiento</h2><small>${r.en_vivo.length}</small></div>
       ${lista}
       <p class="nota">${esc(estado)}. Con el plan gratuito el radar busca partidos nuevos cada 15 a 35 minutos; los candidatos se actualizan cada ${esc(r.intervalo_seguimiento_min ?? 5)} minutos.</p>`;
   },
@@ -294,8 +302,9 @@ const pantallas = {
     // Agrupar por liga, conservando el orden: ligas con más partidos primero
     const ligas = new Map();
     for (const p of visibles) {
-      if (!ligas.has(p.lg)) ligas.set(p.lg, { liga: p.liga, pais: p.pais, ps: [] });
-      ligas.get(p.lg).ps.push(p);
+      const k = p.lg || `fs:${p.liga}`;   // lg 0 = partido solo de Flashscore: se agrupa por nombre
+      if (!ligas.has(k)) ligas.set(k, { liga: p.liga, pais: p.pais, ps: [] });
+      ligas.get(k).ps.push(p);
     }
     const ordenLigas = [...ligas.values()].sort((a, b) => b.ps.length - a.ps.length || a.liga.localeCompare(b.liga));
     const evTexto = (ev) => !ev ? "" : ` · D ${n(ev.d)} · M ${n(ev.mo)}${ev.c ? ` · Over @ ${n(ev.c)}` : ""}`;
@@ -310,7 +319,7 @@ const pantallas = {
     return `<div class="tarjeta contador">
         <div class="fila"><div><b class="num grande">${u.partidos_vivos ?? items.length}</b><span> partidos en vivo</span></div>
           <span class="chip">${hora(u.ts)}</span></div>
-        <p class="nota" style="margin-top:2px">Según API-Football en el radar de ${hace(u.ts)}${u.motivo !== "ok" ? ` (terminó con ${esc(u.motivo)})` : ""}. Para comparar con otra página, mira el conteo a esa misma hora.</p>
+        <p class="nota" style="margin-top:2px">Según ${u.motivo === "fs" ? "Flashscore" : "API-Football"} en el radar de ${hace(u.ts)}${u.motivo !== "ok" ? ` (terminó con ${esc(u.motivo)})` : ""}. Para comparar con otra página, mira el conteo a esa misma hora.</p>
         <div class="estados">${Object.entries(porEstado).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join("")}</div>
         ${barrasVivos(r.historial)}
       </div>

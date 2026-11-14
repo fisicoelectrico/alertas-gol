@@ -27,12 +27,22 @@
 //     · snapshot → regla → alerta + push
 //
 //   Costo con 1 candidato: 2 consultas cada 5 min (fixtures?id + odds/live). Con 3 candidatos: 6.
+//
+//   AHORRO (DECISIONES 27, 13 nov 2026)
+//     · GET /leagues?current=true   1 por semana: cobertura por liga (¿trae cuotas? ¿estadísticas?).
+//     · GET /fixtures?date=HOY      1 por día UTC: la agenda. El radar solo corre si algún partido de
+//                                   una liga útil está entre el descanso y el minuto ~77, y reparte el
+//                                   presupuesto solo entre esos minutos (antes: entre todas las horas activas).
+//     · GET /odds?league&season&date&bet=1  cuotas prepartido EN BLOQUE (10 partidos por consulta) para
+//                                   las ligas con 3+ partidos hoy, en vez de 1 consulta por partido.
+//     · Sin consulta: ligas sin cobertura y partidos "tarde" (pasados del 77', ya no pueden tener momentum).
 //   Bitácora: futbol.escaneos (motivo "ok" = radar, "seguimiento" = solo candidatos).
 // =====================================================================
 import { sql, leerConfig, Config } from "../_shared/db.ts";
 import { ApiFootball, estadoPresupuesto, SinPresupuesto, verificarCuotaReal } from "../_shared/apifootball.ts";
 import * as A from "../_shared/algoritmo.ts";
 import { notificarTodos } from "../_shared/notificar.ts";
+import * as FS from "../_shared/flashscore.ts";
 
 const json = (d: unknown, status = 200) =>
   new Response(JSON.stringify(d, null, 2), { status, headers: { "Content-Type": "application/json" } });
@@ -49,8 +59,163 @@ function reglaDesde(cfg: Config): A.Regla {
     momentum_ventana_min: Number(cfg.momentum_ventana_min),
     momentum_gap_min: Number(cfg.momentum_gap_min),
     pesos_ip: cfg.pesos_ip,
-    patrones_copa: Array.isArray(cfg.patrones_copa) ? cfg.patrones_copa : ["cup", "copa", "coupe", "taça", "pokal", "coppa", "trophy", "libertadores", "sudamericana", "champions league"],
+    patrones_copa: Array.isArray(cfg.patrones_copa) ? cfg.patrones_copa : ["cup", "copa", "coupe", "taça", "pokal", "coppa", "trophy", "libertadores", "sudamericana", "champions league", "friendly", "amistoso"],
   };
+}
+
+// =====================================================================
+// Pasos de ahorro (DECISIONES 27). Cada uno es "a prueba de fallos": si la API responde algo
+// inesperado, se anota en la bitácora y el escáner sigue como antes (sin agenda / de a uno).
+// Tope: entre todos gastan como máximo MAX_PREVIAS consultas por ejecución, porque el plan Free
+// también limita a 10 consultas por minuto y el radar viene detrás.
+// =====================================================================
+const MAX_PREVIAS = 2;
+const NO_JUGABLES = new Set(["PST", "CANC", "ABD", "AWD", "WO", "FT", "AET", "PEN", "SUSP"]);
+
+/** 1 consulta por semana: qué ligas traen cuotas y estadísticas según la propia API. */
+async function cargarCobertura(api: ApiFootball, cfg: Config, pre: string[]) {
+  if (api.llamadas >= MAX_PREVIAS || api.quedan() < 10) return;
+  // Reserva atómica: solo una ejecución la toma (marca a 7 días)
+  const toma = await sql`
+    update futbol.config set valor = to_jsonb(now()::text), actualizado = now()
+    where clave = 'cobertura_ts' and (valor #>> '{}')::timestamptz < now() - interval '7 days'
+    returning 1`;
+  if (!toma.length) return;
+  const r = await api.get("/leagues", { current: "true" });
+  const filas = (r.response ?? []).map((x: any) => {
+    const cov = x.seasons?.find((t: any) => t.current)?.coverage ?? x.seasons?.[0]?.coverage ?? {};
+    return {
+      id: x.league.id, nombre: x.league.name, pais: x.country?.name ?? null,
+      cob_odds: typeof cov.odds === "boolean" ? cov.odds : null,
+      cob_stats: typeof cov.fixtures?.statistics_fixtures === "boolean" ? cov.fixtures.statistics_fixtures : null,
+    };
+  });
+  for (let i = 0; i < filas.length; i += 500) {
+    await sql`insert into futbol.ligas ${sql(filas.slice(i, i + 500), "id", "nombre", "pais", "cob_odds", "cob_stats")}
+      on conflict (id) do update set cob_odds = excluded.cob_odds, cob_stats = excluded.cob_stats, cob_actualizada = now()`;
+  }
+  await sql`update futbol.ligas set cob_actualizada = now() where id = any(${filas.map((f: any) => f.id)}::int[])`;
+  const sinOdds = filas.filter((f: any) => f.cob_odds === false).length;
+  const sinStats = filas.filter((f: any) => f.cob_stats === false).length;
+  pre.push(`cobertura: ${filas.length} ligas (${sinOdds} sin cuotas, ${sinStats} sin estadísticas)`);
+}
+
+/** 1 consulta por día UTC: todos los partidos del día (sin copas), con hora de inicio. */
+async function cargarAgenda(api: ApiFootball, hoy: string, regla: A.Regla, pre: string[]) {
+  if (api.llamadas >= MAX_PREVIAS || api.quedan() < 10) return;
+  const toma = await sql`
+    update futbol.config set valor = to_jsonb(${hoy}::text), actualizado = now()
+    where clave = 'agenda_fecha' and (valor #>> '{}') <> ${hoy}
+    returning 1`;
+  if (!toma.length) return;
+  const r = await api.get("/fixtures", { date: hoy });
+  const todos: any[] = r.response ?? [];
+  const lista = todos.filter((f) => !A.esCopa(f.league?.name, regla.patrones_copa));
+  if (lista.length) {
+    const ligas = [...new Map(lista.map((f) => [f.league.id, f.league])).values()];
+    await sql`insert into futbol.ligas ${sql(ligas.map((l: any) => ({ id: l.id, nombre: l.name, pais: l.country })))}
+              on conflict (id) do update set nombre = excluded.nombre, pais = excluded.pais`;
+    const filas = lista.map((f) => ({
+      fixture_id: f.fixture.id, fecha: hoy, liga_id: f.league.id, temporada: f.league.season,
+      local: f.teams.home.name, visitante: f.teams.away.name, kickoff: f.fixture.date, estado: f.fixture.status.short,
+    }));
+    for (let i = 0; i < filas.length; i += 500) {
+      await sql`insert into futbol.agenda ${sql(filas.slice(i, i + 500))}
+        on conflict (fixture_id) do update set kickoff = excluded.kickoff, estado = excluded.estado`;
+    }
+  }
+  await sql`delete from futbol.agenda where fecha < (${hoy}::date - 3)`;
+  await sql`delete from futbol.cuotas_bloque where fecha < (${hoy}::date - 3)`;
+  pre.push(`agenda ${hoy}: ${todos.length} partidos, ${todos.length - lista.length} de copas fuera`);
+}
+
+/**
+ * Horas de inicio de los partidos "útiles": ligas habilitadas, con cobertura de cuotas y estadísticas
+ * (o sin dato), y sin favorito descartado por la cuota en bloque. `hay` = existe agenda de hoy.
+ */
+async function kickoffsUtiles(hoy: string, regla: A.Regla): Promise<{ hay: boolean; kickoffs: number[] }> {
+  const [{ n }] = await sql`select count(*)::int as n from futbol.agenda where fecha = ${hoy}::date`;
+  if (!n) return { hay: false, kickoffs: [] };
+  const filas = await sql`
+    select a.kickoff from futbol.agenda a
+    left join futbol.ligas l on l.id = a.liga_id
+    left join futbol.v_cobertura_liga c on c.liga_id = a.liga_id
+    where a.kickoff > now() - make_interval(mins => ${A.ZONA_HASTA_MIN})
+      and a.kickoff < (${hoy}::date + 1)::timestamptz
+      and not (coalesce(a.estado, 'NS') = any(${[...NO_JUGABLES]}::text[]))
+      and coalesce(l.habilitada, true) and coalesce(l.cob_odds, true) and coalesce(l.cob_stats, true)
+      and not coalesce(c.sin_cuota_aprendida, false) and not coalesce(c.sin_stats_aprendida, false)
+      and (a.cuota_pre_ts is null or least(a.cuota_pre_local, a.cuota_pre_visitante) <= ${regla.cuota_fav_max})`;
+  return { hay: true, kickoffs: filas.map((f: any) => new Date(f.kickoff).getTime()) };
+}
+
+/**
+ * Cuotas prepartido en bloque: /odds?league&season&date&bet=1 trae hasta 10 partidos por consulta.
+ * Solo para ligas con N+ partidos útiles que empiezan en las próximas 3 horas (o empezaron hace
+ * menos de 45 min). Con la consulta de a uno, cada partido que llega al descanso con alguien
+ * ganando cuesta 1 consulta; una liga con 5 partidos costaba ~3-4. En bloque cuesta 1.
+ */
+async function cuotasEnBloque(api: ApiFootball, cfg: Config, hoy: string, pre: string[]) {
+  const minPartidos = Number(cfg.cuotas_bloque_min_partidos ?? 3);
+  const maxDia = Number(cfg.cuotas_bloque_max_dia ?? 20);
+  if (api.llamadas >= MAX_PREVIAS || api.quedan() < 15) return;
+  const [{ usadas }] = await sql`select coalesce(sum(paginas), 0)::int as usadas from futbol.cuotas_bloque where fecha = ${hoy}::date`;
+  if (usadas >= maxDia) return;
+  const ligas = await sql`
+    select a.liga_id, max(a.temporada) as temporada, count(*)::int as n
+    from futbol.agenda a
+    left join futbol.ligas l on l.id = a.liga_id
+    left join futbol.v_cobertura_liga c on c.liga_id = a.liga_id
+    where a.fecha = ${hoy}::date
+      and a.kickoff between now() - interval '45 minutes' and now() + interval '3 hours'
+      and not (coalesce(a.estado, 'NS') = any(${[...NO_JUGABLES]}::text[]))
+      and coalesce(l.habilitada, true) and coalesce(l.cob_odds, true) and coalesce(l.cob_stats, true)
+      and not coalesce(c.sin_cuota_aprendida, false) and not coalesce(c.sin_stats_aprendida, false)
+      and not exists (select 1 from futbol.cuotas_bloque b where b.fecha = a.fecha and b.liga_id = a.liga_id)
+    group by a.liga_id
+    having count(*) >= ${minPartidos}
+    order by count(*) desc
+    limit 1`;
+  if (!ligas.length) return;
+  const { liga_id, temporada, n } = ligas[0];
+  // Reserva atómica de la liga: si otra ejecución ya la tomó, no se repite
+  const toma = await sql`insert into futbol.cuotas_bloque (fecha, liga_id, temporada) values (${hoy}::date, ${liga_id}, ${temporada})
+                         on conflict do nothing returning 1`;
+  if (!toma.length) return;
+  let paginas = 0, conCuota = 0, error: string | null = null;
+  try {
+    let pagina = 1, total = 1;
+    while (pagina <= total && pagina <= 3 && api.llamadas < MAX_PREVIAS && usadas + paginas < maxDia) {
+      const r = await api.get("/odds", { league: liga_id, season: temporada, date: hoy, bet: 1, page: pagina });
+      paginas++;
+      total = Number(r.paging?.total ?? 1);
+      for (const item of r.response ?? []) {
+        const c = A.parsearCuotaPre({ response: [item] });
+        if (!c || !item.fixture?.id) continue;
+        const upd = await sql`update futbol.agenda set cuota_pre_local = ${c.local.toFixed(2)},
+                     cuota_pre_empate = ${Number.isFinite(c.empate) ? c.empate.toFixed(2) : null},
+                     cuota_pre_visitante = ${c.visitante.toFixed(2)}, cuota_pre_ts = now()
+                   where fixture_id = ${item.fixture.id} returning 1`;
+        conCuota += upd.length;
+      }
+      pagina++;
+    }
+    // Si quedaron páginas sin traer (por el tope por ejecución), se marca como error para que los
+    // partidos que faltan se pidan de a uno, como antes, en vez de darlos por "sin cuotas".
+    if (pagina <= Math.min(total, 3) || total > 3) error = `paginas incompletas ${paginas}/${total}`;
+  } catch (e) {
+    if (e instanceof SinPresupuesto) error = "sin presupuesto";
+    else error = (e as Error).message.slice(0, 300);
+  }
+  await sql`update futbol.cuotas_bloque set paginas = ${paginas}, partidos = ${conCuota}, error = ${error}, ts = now()
+            where fecha = ${hoy}::date and liga_id = ${liga_id}`;
+  pre.push(`cuotas bloque liga ${liga_id}: ${conCuota}/${n} partidos en ${paginas} consulta(s)${error ? ` (${error})` : ""}`);
+}
+
+/** Bitácora de una ejecución que solo hizo pasos previos (agenda/cobertura/bloque) sin radar. */
+async function bitacoraPrevia(llamadas: number, pre: string[], t0: number) {
+  await sql`insert into futbol.escaneos (motivo, llamadas, duracion_ms, detalle)
+            values ('previa', ${llamadas}, ${Date.now() - t0}, ${sql.json({ eventos: pre } as any)})`;
 }
 
 Deno.serve(async (req) => {
@@ -113,15 +278,47 @@ Deno.serve(async (req) => {
     await verificarCuotaReal(key);
     est = await estadoPresupuesto(cfg);
   }
-  if (est.disponibles < 1) return json({ motivo: "presupuesto_agotado", presupuesto: est });
+  // Modo Flashscore (regla v4): la lista, el favorito y las estadísticas salen de Flashscore sin gastar
+  // cuota; API-Football queda para la agenda (1/día), la cuota en vivo del Over y resolver alertas.
+  // Por eso sigue corriendo aunque la cuota de API-Football esté agotada (solo no podrá pedir la cuota en vivo).
+  const modoFS = cfg.fuente_datos === "flashscore";
+  if (est.disponibles < 1 && !modoFS) return json({ motivo: "presupuesto_agotado", presupuesto: est });
 
-  // Reloj del radar: reparte lo que queda del presupuesto entre las horas activas que faltan.
+  const api = new ApiFootball(key, est);
+  const regla = reglaDesde(cfg);
+  const hoy = ahora.toISOString().slice(0, 10);
+  const pre: string[] = [];   // eventos de los pasos previos (agenda, cobertura, cuotas en bloque)
+
+  // ---------- Agenda, cobertura y cuotas en bloque (solo en horario) ----------
+  let agenda: { hay: boolean; kickoffs: number[] } = { hay: false, kickoffs: [] };
+  if (cfg.usar_agenda === true && (enHorario || forzar)) {
+    try {
+      if (!modoFS) await cargarCobertura(api, cfg, pre);
+      await cargarAgenda(api, hoy, regla, pre);
+      agenda = await kickoffsUtiles(hoy, regla);
+      if (!modoFS) await cuotasEnBloque(api, cfg, hoy, pre);
+      if (pre.some((e) => e.startsWith("cuotas bloque"))) agenda = await kickoffsUtiles(hoy, regla);
+    } catch (e) {
+      if (!(e instanceof SinPresupuesto)) pre.push(`agenda: ${(e as Error).message}`);
+    }
+  }
+  const enZona = agenda.hay ? A.hayPartidosEnZona(agenda.kickoffs, ahora) : null;
+
+  // Reloj del radar. Con agenda: reparte lo que queda solo entre los minutos en que algún partido
+  // útil está en zona (descanso → 77'). Sin agenda: entre las horas activas que faltan (como antes).
   // Lo que gaste el seguimiento baja `disponibles`, así que el radar se espacia solo: los
   // candidatos tienen prioridad sobre buscar partidos nuevos.
-  const intervaloRadar = forzar ? 1 : A.intervaloEfectivo({
-    intervaloBase: Number(cfg.intervalo_radar_min), disponibles: est.disponibles,
-    fraccionRadar: Number(cfg.fraccion_radar ?? 0.5), horasActivas: horas, ahora,
-  });
+  const disponiblesAhora = api.quedan();
+  const intervaloRadar = forzar ? 1 : agenda.hay
+    ? A.intervaloPorZona({
+        intervaloBase: Number(cfg.intervalo_radar_min), disponibles: disponiblesAhora,
+        fraccionRadar: Number(cfg.fraccion_radar ?? 0.5),
+        minutosZona: A.minutosZonaRestantes(agenda.kickoffs, ahora, horas),
+      })
+    : A.intervaloEfectivo({
+        intervaloBase: Number(cfg.intervalo_radar_min), disponibles: disponiblesAhora,
+        fraccionRadar: Number(cfg.fraccion_radar ?? 0.5), horasActivas: horas, ahora,
+      });
   // Reloj del seguimiento: cada intervalo_seguimiento_min si hay candidatos. Si solo quedan
   // alertas pendientes por resolver, basta con mirar cada intervalo_radar_min.
   const intervaloSeg = nCandidatos > 0
@@ -144,17 +341,25 @@ Deno.serve(async (req) => {
   const marcar = (clave: string) =>
     sql`update futbol.config set valor = to_jsonb(now()::text), actualizado = now() where clave = ${clave}`;
 
-  let modo: "radar" | "seguimiento" | null = null;
-  if ((enHorario || forzar) && await reservar("ultimo_radar", intervaloRadar)) modo = "radar";
+  let modo: "radar" | "seguimiento" | "fs" | null = null;
+  // Sin partidos útiles en zona no hay nada que el radar pueda encontrar: no se gasta.
+  const radarUtil = forzar || enZona === null || enZona > 0;
+  if (modoFS) {
+    if ((enHorario || forzar || nCandidatos > 0 || nPendientes > 0) &&
+        await reservar("ultimo_fs", forzar ? 0.5 : Number(cfg.intervalo_fs_min ?? 5))) modo = "fs";
+  } else if ((enHorario || forzar) && radarUtil && await reservar("ultimo_radar", intervaloRadar)) modo = "radar";
   else if ((nCandidatos > 0 || nPendientes > 0) && await reservar("ultimo_seguimiento", intervaloSeg)) modo = "seguimiento";
-  if (!modo) return json({ motivo: "intervalo", radar_min: intervaloRadar, seguimiento_min: intervaloSeg });
+  if (!modo) {
+    if (api.llamadas > 0) await bitacoraPrevia(api.llamadas, pre, t0);
+    return json({ motivo: radarUtil ? "intervalo" : "sin_partidos_en_zona", radar_min: intervaloRadar, seguimiento_min: intervaloSeg, en_zona: enZona, pre });
+  }
   // El radar también hace el detalle de los candidatos: reinicia el reloj del seguimiento
   if (modo === "radar") await marcar("ultimo_seguimiento");
 
-  const api = new ApiFootball(key, est);
-  const regla = reglaDesde(cfg);
   const detalle: Record<string, unknown> = {
-    modo, intervalo_min: modo === "radar" ? intervaloRadar : intervaloSeg, regla: regla.version, eventos: [] as string[],
+    modo, intervalo_min: modo === "radar" ? intervaloRadar : modo === "fs" ? Number(cfg.intervalo_fs_min ?? 5) : intervaloSeg,
+    regla: regla.version, eventos: [...pre] as string[],
+    en_zona: enZona,
   };
   const log = (s: string) => (detalle.eventos as string[]).push(s);
   let alertasNuevas = 0, resueltas = 0, candidatosN = 0, vivos = 0;
@@ -182,6 +387,7 @@ Deno.serve(async (req) => {
           habilitada: i?.habilitada ?? true, consultada: !!(p?.cuota_pre_consultada ?? i?.cuota_pre_consultada),
           favorito, cuotaFav: Number.isFinite(cuotaFav) ? cuotaFav : null,
           yaAlertado: yaAlertados.has(id), detalle: (resultadoDetalle.get(id) ?? null) as any,
+          sinCobertura: !!(i?.liga_sin_cuota || i?.liga_sin_stats),
         }, regla);
         return {
           id, lg: f.league.id, liga: f.league.name, pais: f.league.country,
@@ -277,8 +483,12 @@ Deno.serve(async (req) => {
     if (!ids.length) return;
     for (const f of await sql`
       select p.fixture_id, p.favorito, p.cuota_pre_local, p.cuota_pre_visitante, p.cuota_pre_consultada,
-             p.sin_stats, p.cuota_vivo_probada, coalesce(l.habilitada, true) as habilitada
+             p.sin_stats, p.cuota_vivo_probada, coalesce(l.habilitada, true) as habilitada,
+             (l.cob_odds = false or coalesce(c.sin_cuota_aprendida, false)) as liga_sin_cuota,
+             (l.cob_stats = false or coalesce(c.sin_stats_aprendida, false)) as liga_sin_stats,
+             exists (select 1 from futbol.snapshots s where s.fixture_id = p.fixture_id and s.stats_local is not null) as con_snap
       from futbol.partidos p left join futbol.ligas l on l.id = p.liga_id
+      left join futbol.v_cobertura_liga c on c.liga_id = p.liga_id
       where p.fixture_id = any(${ids}::int[])`) { info.set(f.fixture_id, f); favs.set(f.fixture_id, f); }
   };
 
@@ -298,7 +508,10 @@ Deno.serve(async (req) => {
   };
   // Poka-yoke de presupuesto: si la API ya respondió 2 veces seguidas sin estadísticas para este
   // partido, deja de gastar en él. Sin estadísticas no hay dominancia y la regla nunca dispararía.
-  const sinCobertura = (id: number) => Number(info.get(id)?.sin_stats ?? 0) >= 2;
+  const sinCobertura = (id: number) => Number(info.get(id)?.sin_stats ?? 0) >= 2 || info.get(id)?.liga_sin_stats === true;
+  // "Tarde": todavía sin snapshot con estadísticas y ya pasó el 77'. El momentum exige un snapshot
+  // 8+ minutos anterior, así que este partido ya no puede alertar antes del 85'. No se gasta en él.
+  const tarde = (f: any) => !info.get(f.fixture.id)?.con_snap && (f.fixture.status.elapsed ?? 0) > A.limiteTarde(regla);
 
   /**
    * Detalle de los candidatos. `conStats` trae los fixtures de /fixtures?id (con estadísticas
@@ -320,7 +533,7 @@ Deno.serve(async (req) => {
       // Estadísticas: vienen dentro del fixture. Si la clave ni siquiera existe (respuesta distinta
       // a la esperada), se cae al endpoint dedicado para no quedarnos ciegos.
       let equipos: any[] = Array.isArray(f.statistics) ? f.statistics : [];
-      let fuenteStats = "fixtures?id";
+      let fuenteStats = f.__fuente ?? "fixtures?id";
       if (!Array.isArray(f.statistics) && api.quedan() > 0) {
         equipos = (await api.get("/fixtures/statistics", { fixture: id })).response ?? [];
         fuenteStats = "fixtures/statistics";
@@ -440,6 +653,138 @@ Deno.serve(async (req) => {
       yaAlertados.add(r.fixture_id);
     }
 
+
+    if (modo === "fs") {
+      // ================= CICLO FLASHSCORE (regla v4) =================
+      // 1. Lista del día (gratis). Copas fuera por nombre, igual que en v3.
+      const listaFS = (await FS.listaDia(0)).filter((p) => !A.esCopa(p.liga, regla.patrones_copa));
+      const vivosFS = listaFS.filter((p) => p.estado === 2 || p.estado === 3);
+      vivos = listaFS.filter((p) => p.estado === 2).length;
+
+      // 2. Emparejar con API-Football usando la agenda (cada partido una sola vez; queda en fs_partidos)
+      const conocidos = new Map<string, any>();
+      if (vivosFS.length) {
+        for (const r of await sql`select * from futbol.fs_partidos where fs_id = any(${vivosFS.map((p) => p.id)}::text[])`) conocidos.set(r.fs_id, r);
+      }
+      const nuevos = vivosFS.filter((p) => p.estado === 2 && !conocidos.get(p.id)?.fixture_id);
+      if (nuevos.length) {
+        const desde = new Date(Math.min(...nuevos.map((p) => p.inicio)) - 20 * 60000).toISOString();
+        const hasta = new Date(Math.max(...nuevos.map((p) => p.inicio)) + 20 * 60000).toISOString();
+        const ag = (await sql`select fixture_id, local, visitante, kickoff from futbol.agenda where kickoff between ${desde} and ${hasta}`)
+          .map((r: any) => ({ fixture_id: r.fixture_id, local: r.local, visitante: r.visitante, kickoff: new Date(r.kickoff).getTime() }));
+        const mapa = FS.emparejar(nuevos, ag);
+        for (const p of nuevos) {
+          const m = mapa.get(p.id);
+          const [fila] = await sql`
+            insert into futbol.fs_partidos (fs_id, fixture_id, puntaje, liga, local, visitante, inicio, id_local, id_visitante)
+            values (${p.id}, ${m?.fixture_id ?? null}, ${m?.puntaje ?? null}, ${p.liga}, ${p.local}, ${p.visitante},
+                    ${new Date(p.inicio).toISOString()}, ${p.idLocal}, ${p.idVisitante})
+            on conflict (fs_id) do update set fixture_id = coalesce(futbol.fs_partidos.fixture_id, excluded.fixture_id),
+              puntaje = coalesce(futbol.fs_partidos.puntaje, excluded.puntaje)
+            returning *`;
+          conocidos.set(p.id, fila);
+        }
+        log(`fs: ${mapa.size}/${nuevos.length} partidos nuevos emparejados con API-Football`);
+      }
+
+      // 3. Convertir a la forma de API-Football para reutilizar todo el resto del escáner
+      const agendaInfo = new Map<number, any>();
+      const idsApi = [...conocidos.values()].map((r) => r.fixture_id).filter(Boolean);
+      if (idsApi.length) {
+        for (const r of await sql`select a.fixture_id, a.liga_id, a.temporada, l.nombre, l.pais from futbol.agenda a
+                                   left join futbol.ligas l on l.id = a.liga_id where a.fixture_id = any(${idsApi}::int[])`) agendaInfo.set(r.fixture_id, r);
+      }
+      const comoApi = (p: FS.PartidoFS, fixtureId: number) => {
+        const em = FS.estadoYMinuto(p);
+        const ai = agendaInfo.get(fixtureId);
+        return {
+          __fs: p, __fuente: "flashscore",
+          fixture: { id: fixtureId, date: new Date(p.inicio).toISOString(), status: { short: em.estado, elapsed: em.minuto } },
+          league: { id: ai?.liga_id ?? 0, name: ai?.nombre ?? p.liga, country: ai?.pais ?? null, season: ai?.temporada ?? null },
+          teams: { home: { id: 1, name: p.local }, away: { id: 2, name: p.visitante } },
+          goals: { home: p.gl, away: p.gv },
+        };
+      };
+      const enVivo = vivosFS.filter((p) => p.estado === 2 && conocidos.get(p.id)?.fixture_id && agendaInfo.has(conocidos.get(p.id).fixture_id))
+        .map((p) => comoApi(p, conocidos.get(p.id).fixture_id));
+      lista = enVivo;
+      const porIdFS = new Map<number, any>(enVivo.map((f) => [f.fixture.id, f]));
+      const idsVivosFS = [...porIdFS.keys()];
+      await guardarPartidos(enVivo);
+      await sql`update futbol.partidos set seguimiento = false where seguimiento and not (fixture_id = any(${idsVivosFS}::int[]))`;
+
+      // 4. Resolver alertas pendientes cuyo partido Flashscore ya dio por terminado (1 consulta API cada una)
+      const terminados = new Set(vivosFS.filter((p) => p.estado === 3).map((p) => conocidos.get(p.id)?.fixture_id).filter(Boolean));
+      const pend = (await sql`select distinct fixture_id from futbol.alertas where resultado = 'pendiente'`).map((r: any) => r.fixture_id);
+      // Red de seguridad: si Flashscore ya no lista el partido (cambió el día UTC), a las 2,5 h de la alerta se pregunta igual
+      const viejas = (await sql`select distinct fixture_id from futbol.alertas where resultado = 'pendiente' and ts < now() - interval '150 minutes'
+                                and extract(minute from now()) < 5`)  // como mucho una vez por hora
+        .map((r: any) => r.fixture_id);
+      const aResolver = [...new Set([...pend.filter((id: number) => terminados.has(id)), ...viejas])];
+      if (aResolver.length) await resolverPendientes(await fixturesPorId(aResolver.slice(0, 3)), false);
+
+      // 5. Favorito con la cuota de APERTURA de las casas colombianas (gratis, una vez por partido)
+      await cargarInfo(idsVivosFS);
+      let cupoCuotas = Number(cfg.fs_cuotas_por_ciclo ?? 8);
+      for (const f of enVivo) {
+        const i = info.get(f.fixture.id);
+        if (!i?.habilitada || i.cuota_pre_consultada) continue;
+        const st = f.fixture.status;
+        if (st.short === "2H" && (st.elapsed ?? 0) > A.limiteTarde(regla)) continue;
+        if (!A.preCandidato(st.short, st.elapsed ?? 0, f.goals.home, f.goals.away, regla)) continue;
+        if (cupoCuotas-- <= 0) break;
+        const p: FS.PartidoFS = f.__fs;
+        let c: FS.CuotasFS | null = null;
+        try { c = await FS.cuotas(p.id, p.idLocal, p.idVisitante); } catch (e) { log(`fs cuotas ${p.id}: ${(e as Error).message}`); continue; }
+        const ap = c.apertura ?? c.actual;
+        const fav = ap ? A.definirFavorito(ap, Number.POSITIVE_INFINITY) : null;
+        await sql`update futbol.partidos set cuota_pre_consultada = true, favorito = ${fav},
+                    cuota_pre_local = ${ap ? ap.local.toFixed(2) : null},
+                    cuota_pre_empate = ${ap && Number.isFinite(ap.empate) ? ap.empate.toFixed(2) : null},
+                    cuota_pre_visitante = ${ap ? ap.visitante.toFixed(2) : null}
+                  where fixture_id = ${f.fixture.id}`;
+        await sql`update futbol.fs_partidos set cuotas = ${sql.json(c as any)} where fs_id = ${p.id}`;
+        log(`favorito ${f.fixture.id} (fs, ${c.casas.length} casas): ${fav ?? "sin cuotas"}`);
+      }
+      await cargarInfo(idsVivosFS);
+
+      // 6. Candidatos y detalle: estadísticas de Flashscore (gratis); cuota en vivo con API-Football
+      const filtradosFS = enVivo.filter(esCandidato);
+      for (const f of filtradosFS) if (tarde(f)) resultadoDetalle.set(f.fixture.id, "tarde" as any);
+      const candidatosFS = filtradosFS.filter((f) => !tarde(f) && Number(info.get(f.fixture.id)?.sin_stats ?? 0) < 2)
+        .sort((a, b) => (b.fixture.status.elapsed ?? 0) - (a.fixture.status.elapsed ?? 0));
+      candidatosN = candidatosFS.length;
+      await actualizarSeguimiento(candidatosFS.map((f) => f.fixture.id), idsVivosFS);
+      const conStatsFS = new Map<number, any>();
+      for (const f of candidatosFS.slice(0, maxDetalle)) {
+        try {
+          const s = await FS.estadisticas(f.__fs.id);
+          conStatsFS.set(f.fixture.id, { ...f, statistics: s.local.length ? [{ team: { id: 1 }, statistics: s.local }, { team: { id: 2 }, statistics: s.visitante }] : [] });
+        } catch (e) {
+          log(`fs stats ${f.__fs.id}: ${(e as Error).message}`);
+          conStatsFS.set(f.fixture.id, { ...f, statistics: [] });
+        }
+      }
+      await detallarCandidatos(candidatosFS, conStatsFS);
+      // La foto incluye también los partidos en vivo de Flashscore que no tienen pareja en API-Football:
+      // así la lista del Radar suma lo mismo que el conteo `vivos`. No se pueden evaluar (sin fixture
+      // no hay cuota en vivo), por eso van con motivo "sin_cruce".
+      const enLista = new Set(enVivo.map((f) => f.__fs.id));
+      const sinCruce = vivosFS.filter((p) => p.estado === 2 && !enLista.has(p.id)).map((p) => {
+        const em = FS.estadoYMinuto(p);
+        const [paisFS, resto] = p.liga.includes(": ") ? p.liga.split(/: (.*)/s) : [null, p.liga];
+        return {
+          id: `fs:${p.id}`, lg: 0, liga: (resto ?? p.liga).replace(/ - .*$/, ""),
+          pais: paisFS ? paisFS.charAt(0) + paisFS.slice(1).toLowerCase() : null,
+          l: p.local, v: p.visitante, e: em.estado, m: em.minuto, gl: p.gl, gv: p.gv,
+          fav: null, cf: null, mo: "sin_cruce",
+        };
+      });
+      const foto = fotoRadar();
+      return await bitacora("fs", { vivos, candidatos: candidatosN, llamadas: api.llamadas, alertas: alertasNuevas, resueltas, detalle,
+        radar: foto ? [...foto, ...sinCruce] : null });
+    }
+
     if (modo === "seguimiento") {
       // ================= SEGUIMIENTO: solo candidatos y alertas pendientes =================
       const ids: number[] = [...new Set((await sql`
@@ -455,7 +800,7 @@ Deno.serve(async (req) => {
       await resolverPendientes(porId, false);
       await cargarInfo(alcance);
       // Lo que ya no está en vivo o dejó de cumplir el filtro (gol, minuto 85, terminó) sale del seguimiento
-      const candidatos = fixtures.filter((f) => esCandidato(f) && !sinCobertura(f.fixture.id))
+      const candidatos = fixtures.filter((f) => esCandidato(f) && !sinCobertura(f.fixture.id) && !tarde(f))
         .sort((a, b) => (b.fixture.status.elapsed ?? 0) - (a.fixture.status.elapsed ?? 0));
       candidatosN = candidatos.length;
       await actualizarSeguimiento(candidatos.map((f) => f.fixture.id), [...porId.keys()]);
@@ -484,12 +829,36 @@ Deno.serve(async (req) => {
 
     // ---------- 3. Favoritos (cuota prepartido, una sola vez por partido) ----------
     await cargarInfo(idsVivos);
+    // 3a. Primero la caché de cuotas en bloque (agenda): cero consultas
+    const pedibles = (f: any) => {
+      const i = info.get(f.fixture.id);
+      if (!i?.habilitada || i.cuota_pre_consultada) return false;
+      if (i.liga_sin_cuota || i.liga_sin_stats) return false;          // la liga no tiene con qué alertar
+      if (f.fixture.status.short === "2H" && (f.fixture.status.elapsed ?? 0) > A.limiteTarde(regla)) return false; // tarde
+      return A.preCandidato(f.fixture.status.short, f.fixture.status.elapsed ?? 0, f.goals.home ?? 0, f.goals.away ?? 0, regla);
+    };
+    const idsPedibles = ligasOk.filter(pedibles).map((f) => f.fixture.id);
+    if (idsPedibles.length) {
+      const deCache = await sql`
+        select a.fixture_id, a.cuota_pre_local, a.cuota_pre_empate, a.cuota_pre_visitante, a.cuota_pre_ts,
+               (b.error is null) as bloque_ok
+        from futbol.agenda a join futbol.cuotas_bloque b on b.liga_id = a.liga_id and b.fecha = a.fecha
+        where a.fixture_id = any(${idsPedibles}::int[])`;
+      for (const c of deCache) {
+        let fav: "home" | "away" | null = null;
+        if (c.cuota_pre_ts) {
+          fav = A.definirFavorito({ local: Number(c.cuota_pre_local), visitante: Number(c.cuota_pre_visitante) }, Number.POSITIVE_INFINITY);
+        } else if (!c.bloque_ok) continue;   // el bloque falló: se pide de a uno como antes
+        // Si el bloque de su liga llegó bien y este partido no venía, es que no tiene cuotas: igual que una consulta vacía
+        await sql`update futbol.partidos set cuota_pre_consultada = true, favorito = ${fav},
+                    cuota_pre_local = ${c.cuota_pre_local}, cuota_pre_empate = ${c.cuota_pre_empate}, cuota_pre_visitante = ${c.cuota_pre_visitante}
+                  where fixture_id = ${c.fixture_id}`;
+        log(`favorito ${c.fixture_id} desde bloque: ${fav ?? "sin cuotas"}`);
+      }
+      if (deCache.length) await cargarInfo(idsVivos);
+    }
     const sinFavorito = ligasOk
-      .filter((f) => {
-        const i = info.get(f.fixture.id);
-        return i?.habilitada && !i.cuota_pre_consultada &&
-          A.preCandidato(f.fixture.status.short, f.fixture.status.elapsed ?? 0, f.goals.home ?? 0, f.goals.away ?? 0, regla);
-      })
+      .filter(pedibles)
       // prioridad: 2T dentro de la ventana primero
       .sort((a, b) => (b.fixture.status.short === "2H" ? 1 : 0) - (a.fixture.status.short === "2H" ? 1 : 0));
 
@@ -518,8 +887,11 @@ Deno.serve(async (req) => {
 
     // ---------- 4. Candidatos ----------
     const filtrados = ligasOk.filter(esCandidato);
-    for (const f of filtrados) if (sinCobertura(f.fixture.id)) resultadoDetalle.set(f.fixture.id, "sin_estadisticas");
-    const candidatos = filtrados.filter((f) => !sinCobertura(f.fixture.id))
+    for (const f of filtrados) {
+      if (sinCobertura(f.fixture.id)) resultadoDetalle.set(f.fixture.id, "sin_estadisticas");
+      else if (tarde(f)) resultadoDetalle.set(f.fixture.id, "tarde" as any);
+    }
+    const candidatos = filtrados.filter((f) => !sinCobertura(f.fixture.id) && !tarde(f))
       .sort((a, b) => (b.fixture.status.elapsed ?? 0) - (a.fixture.status.elapsed ?? 0));
     candidatosN = candidatos.length;
     await actualizarSeguimiento(candidatos.map((f) => f.fixture.id), idsVivos);
