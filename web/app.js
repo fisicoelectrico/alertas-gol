@@ -445,7 +445,7 @@ const pantallas = {
       return `<div class="tarjeta vacio"><strong>Sin alertas resueltas todavía</strong>
         Aquí se compara el acierto real contra la probabilidad implícita de la cuota.
         A cuota 1,40 hay que acertar más del 71,4% para ganar dinero.</div>
-        <p class="nota">Datos acumulados: ${r.datos.snapshots} snapshots de ${r.datos.partidos_seguidos} partidos · ${r.conteo.pendientes} alertas pendientes.</p>
+        <p class="nota">Datos acumulados: ${r.datos.snapshots} snapshots de ${r.datos.partidos_seguidos} partidos · ${r.conteo.pendientes} alertas pendientes${r.conteo.excluidas ? ` · ${r.conteo.excluidas} de ligas excluidas no cuentan` : ""}.</p>
         ${historialPaises(r.historial)}`;
     }
     const bloque = (g) => {
@@ -477,7 +477,7 @@ const pantallas = {
     return `${globales.map(bloque).join("")}
       ${tabla("Por franja de minuto", r.filas.filter((f) => f.franja_minuto !== "(todas)"), "Franja")}
       ${tabla("Por liga", r.filas.filter((f) => f.liga !== "(todas)"), "Liga")}
-      <p class="nota">Pendientes: ${r.conteo.pendientes} · anuladas: ${r.conteo.anuladas} · snapshots guardados: ${r.datos.snapshots}.</p>
+      <p class="nota">Pendientes: ${r.conteo.pendientes} · anuladas: ${r.conteo.anuladas} · snapshots guardados: ${r.datos.snapshots}${r.conteo.excluidas ? ` · ${r.conteo.excluidas} alertas de ligas excluidas fuera del cálculo (no se borraron)` : ""}.</p>
       ${historialPaises(r.historial)}`;
   },
 
@@ -533,7 +533,7 @@ const pantallas = {
       });
       document.querySelectorAll(".liga-fila input").forEach((i) => i.addEventListener("change", async () => {
         const ok = await conPin((pin) => post("/admin/liga", { pin, id: Number(i.dataset.id), habilitada: i.checked }));
-        if (!ok) i.checked = !i.checked; else toast(i.checked ? "Liga activada" : "Liga aislada");
+        if (!ok) i.checked = !i.checked; else toast(i.checked ? "Liga activada: vuelve a todas las vistas" : "Liga excluida: fuera de directos, candidatos, alertas y métricas");
       }));
     });
     return `<div class="titulo-seccion"><h2>Ligas</h2><small>${l.filter((x) => x.habilitada).length} de ${l.length} activas</small></div>
@@ -542,7 +542,7 @@ const pantallas = {
         <div><b>${esc(x.nombre)}</b><small>${esc(x.pais || "")} · ${x.partidos} partidos vistos${x.alertas_resueltas ? ` · ${x.aciertos}/${x.alertas_resueltas} aciertos · ${n(x.ganancia_u)} u` : ""}</small></div>
         <label class="sw"><input type="checkbox" data-id="${x.id}" ${x.habilitada ? "checked" : ""} aria-label="Activar ${esc(x.nombre)}"><span></span></label>
       </div>`).join("")}</div>
-      <p class="nota">Una liga aislada se sigue viendo en el radar, pero no gasta consultas ni genera alertas.</p>`;
+      <p class="nota">Apagar una liga la excluye al instante: sale de En vivo, Radar, el widget, Candidatos, Alertas y Rendimiento, y no gasta consultas. No se borra nada: si la vuelves a encender, sus partidos y alertas reaparecen y vuelven a contar.</p>`;
   },
 
   async ajustes() {

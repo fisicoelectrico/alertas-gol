@@ -77,6 +77,29 @@ function validarValor(clave: string, v: unknown): boolean {
   return typeof v === "number" && Number.isFinite(v) && v >= 0;
 }
 
+// ---------- Ligas excluidas (DECISIONES 33) ----------
+// Apagar una liga en la pestaña Ligas (ligas.habilitada = false) la saca AL INSTANTE de En vivo, Radar,
+// widget, Alertas, Candidatos y Rendimiento. No se borra nada: el filtro se aplica al leer, así que si
+// la liga se vuelve a activar todo reaparece. La foto del radar es JSON guardado por el escáner, por eso
+// se filtra aquí y no espera al próximo barrido. Los partidos solo de Flashscore (lg = 0) se reconocen
+// por nombre de liga + país.
+async function ligasExcluidas() {
+  const filas = await sql`select id, lower(nombre) as n, lower(coalesce(pais, '')) as p from futbol.ligas where habilitada = false`;
+  const ids = new Set(filas.map((f: any) => Number(f.id)));
+  const nombres = new Set(filas.map((f: any) => `${f.n}|${f.p}`));
+  return (j: any) => ids.has(Number(j?.lg)) || nombres.has(`${String(j?.liga ?? "").toLowerCase()}|${String(j?.pais ?? "").toLowerCase()}`);
+}
+// Quita de una foto del radar los partidos de ligas excluidas y descuenta los que estaban en juego
+async function fotoSinExcluidas(u: any) {
+  if (!u?.radar) return u;
+  const excluida = await ligasExcluidas();
+  const quitados = u.radar.filter(excluida);
+  if (!quitados.length) return u;
+  const enJuego = quitados.filter((j: any) => j.e === "1H" || j.e === "2H" || j.e === "HT").length;
+  return { ...u, radar: u.radar.filter((j: any) => !excluida(j)),
+           partidos_vivos: u.partidos_vivos == null ? null : Math.max(0, u.partidos_vivos - enJuego) };
+}
+
 async function resumen() {
   const cfg = await leerConfig();
   const enVivo = await sql`
@@ -88,8 +111,9 @@ async function resumen() {
            (select row_to_json(a) from futbol.alertas a where a.fixture_id = p.fixture_id
               order by ts desc limit 1) as alerta
     from futbol.partidos p left join futbol.ligas l on l.id = p.liga_id
-    where p.seguimiento
-       or exists (select 1 from futbol.alertas a where a.fixture_id = p.fixture_id and a.resultado = 'pendiente')
+    where coalesce(l.habilitada, true)
+      and (p.seguimiento
+       or exists (select 1 from futbol.alertas a where a.fixture_id = p.fixture_id and a.resultado = 'pendiente'))
     order by p.minuto desc nulls last`;
   const [ultimo] = await sql`select ts, motivo, partidos_vivos, candidatos, llamadas, alertas, resueltas, detalle
                              from futbol.escaneos where motivo not in ('seguimiento', 'previa') order by ts desc limit 1`;
@@ -108,9 +132,10 @@ async function resumen() {
 // Lee la última foto del radar (no gasta consultas de API-Football) y marca como candidato lo que
 // el escáner tiene en seguimiento o con alerta pendiente. Respuesta chica (~100 bytes por partido).
 async function widget() {
-  const [u] = await sql`select ts, partidos_vivos, candidatos, radar from futbol.escaneos
-                        where radar is not null order by ts desc limit 1`;
-  if (!u) return { ts: null, vivos: 0, candidatos: 0, partidos: [] };
+  const [u0] = await sql`select ts, partidos_vivos, candidatos, radar from futbol.escaneos
+                         where radar is not null order by ts desc limit 1`;
+  if (!u0) return { ts: null, vivos: 0, candidatos: 0, partidos: [] };
+  const u = await fotoSinExcluidas(u0);
   const segs = new Set((await sql`
     select fixture_id from futbol.partidos where seguimiento
     union select fixture_id from futbol.alertas where resultado = 'pendiente'`).map((r: any) => String(r.fixture_id)));
@@ -122,8 +147,9 @@ async function widget() {
 
 // Pestaña Radar. No llama a API-Football: lee la foto que el escáner guardó en su último barrido.
 async function radar() {
-  const [ultimo] = await sql`select ts, motivo, partidos_vivos, llamadas, radar
-                             from futbol.escaneos where radar is not null order by ts desc limit 1`;
+  const [ultimo0] = await sql`select ts, motivo, partidos_vivos, llamadas, radar
+                              from futbol.escaneos where radar is not null order by ts desc limit 1`;
+  const ultimo = await fotoSinExcluidas(ultimo0);
   // Serie de las últimas 24 h: cuántos partidos en vivo vio cada radar (para la mini-gráfica)
   const historial = await sql`select ts, partidos_vivos as vivos from futbol.escaneos
                               where partidos_vivos is not null and ts > now() - interval '24 hours' order by ts`;
@@ -141,7 +167,8 @@ async function radar() {
            count(distinct j->>'id') filter (where j->>'mo' = 'aislada')::int as aislada,
            count(distinct j->>'id') filter (where j->>'mo' in ('evaluado','sin_cuota_vivo','sin_estadisticas','sin_cupo','ya_alertado'))::int as candidatos,
            max(ts) as visto
-    from x group by 1 order by partidos desc, liga`;
+    from x where not exists (select 1 from futbol.ligas l where l.id = (x.j->>'lg')::int and l.habilitada = false)
+    group by 1 order by partidos desc, liga`;
   const cfg = await leerConfig();
   return { ultimo: ultimo ?? null, historial, ligas, horas_activas_utc: cfg.horas_activas_utc,
            minuto_min: cfg.minuto_min, minuto_max: cfg.minuto_max, cuota_fav_max: cfg.cuota_fav_max,
@@ -152,19 +179,26 @@ async function alertas() {
   return await sql`
     select a.*, p.local, p.visitante, p.favorito, p.goles_local_90, p.goles_visitante_90, l.nombre as liga
     from futbol.alertas a join futbol.partidos p using (fixture_id) left join futbol.ligas l on l.id = p.liga_id
+    where coalesce(l.habilitada, true)
     order by a.ts desc limit 200`;
 }
 
 async function rendimiento() {
   const filas = await sql`select * from futbol.v_rendimiento order by regla_version, liga, franja_minuto`;
-  const [conteo] = await sql`select count(*) filter (where resultado='pendiente')::int as pendientes,
-                                    count(*) filter (where resultado='anulada')::int as anuladas,
-                                    count(*)::int as total from futbol.alertas`;
+  // v_rendimiento ya ignora las ligas excluidas (migración 20261114210000); el conteo hace lo mismo
+  // y dice cuántas alertas quedaron fuera, para que se vea que no se borraron.
+  const [conteo] = await sql`select count(*) filter (where resultado='pendiente' and incluida)::int as pendientes,
+                                    count(*) filter (where resultado='anulada' and incluida)::int as anuladas,
+                                    count(*) filter (where incluida)::int as total,
+                                    count(*) filter (where not incluida)::int as excluidas
+                             from (select a.resultado, coalesce(l.habilitada, true) as incluida
+                                   from futbol.alertas a join futbol.partidos p using (fixture_id)
+                                   left join futbol.ligas l on l.id = p.liga_id) x`;
   const [datos] = await sql`select (select count(*)::int from futbol.snapshots) as snapshots,
                                    (select count(distinct fixture_id)::int from futbol.snapshots) as partidos_seguidos`;
   // Historial acumulado por liga (vista v_ligas_historial); la PWA lo agrupa por país.
   const historial = await sql`select * from futbol.v_ligas_historial
-                              where precandidatos > 0 order by candidatos desc, precandidatos desc, vistos desc`;
+                              where precandidatos > 0 and coalesce(habilitada, true) order by candidatos desc, precandidatos desc, vistos desc`;
   return { filas, conteo, datos, historial };
 }
 
@@ -172,8 +206,10 @@ async function rendimiento() {
 // más después de entrar?, ¿en qué minuto?, ¿de quién?) y la serie de cada snapshot. Sirve para ver
 // qué se le escapa a la regla (falsos negativos) y calibrar la v5. No gasta cuota: solo lee la base.
 async function candidatos(dias: number) {
-  const filas = await sql`select * from futbol.v_candidatos
-                          where ts_entrada > now() - make_interval(days => ${dias}) order by ts_entrada desc limit 300`;
+  const filas = await sql`select c.* from futbol.v_candidatos c join futbol.partidos p using (fixture_id)
+                          left join futbol.ligas l on l.id = p.liga_id
+                          where coalesce(l.habilitada, true)
+                            and c.ts_entrada > now() - make_interval(days => ${dias}) order by c.ts_entrada desc limit 300`;
   const ids = filas.map((f: any) => f.fixture_id);
   // Serie compacta: IP, dominancia, momentum, cuota, córners y ataques peligrosos de cada snapshot.
   // Los ataques peligrosos solo existen si Flashscore los publica para esa liga (raw.fixture.__extra).
@@ -306,6 +342,8 @@ Deno.serve(async (req) => {
       }
       if (ruta === "/admin/liga") {
         await sql`update futbol.ligas set habilitada = ${!!body.habilitada} where id = ${Number(body.id)}`;
+        // Excluir surte efecto ya: sus partidos salen del seguimiento sin esperar el próximo ciclo del escáner
+        if (!body.habilitada) await sql`update futbol.partidos set seguimiento = false where seguimiento and liga_id = ${Number(body.id)}`;
         return json({ ok: true });
       }
       if (ruta === "/admin/push-prueba") {
