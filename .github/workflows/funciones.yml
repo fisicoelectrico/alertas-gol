@@ -41,5 +41,5 @@ jobs:
         name: Desplegar
         run: |
           for f in escaner api sonda-flashscore; do
-            supabase functions deploy "$f" --remote "$PROYECTO" --no-verify-jwt --use-api --yes   # --yes: en Actions no hay terminal para confirmar
+            supabase functions deploy "$f" --remote="$PROYECTO" --no-verify-jwt --use-api --yes   # --yes: en Actions no hay terminal para confirmar
           done
