@@ -1,4 +1,4 @@
-# Alertas de Gol en Vivo
+# ADN Soccer (antes Alertas de Gol en Vivo)
 
 Detecta partidos donde el **favorito va perdiendo en el segundo tiempo y presiona**, y avisa por
 notificación push cuando la cuota de "un gol más" (Over goles actuales + 0.5) llega al umbral.

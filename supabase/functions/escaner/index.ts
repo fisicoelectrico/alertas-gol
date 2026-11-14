@@ -41,7 +41,8 @@
 import { sql, leerConfig, Config } from "../_shared/db.ts";
 import { ApiFootball, estadoPresupuesto, SinPresupuesto, verificarCuotaReal } from "../_shared/apifootball.ts";
 import * as A from "../_shared/algoritmo.ts";
-import { notificarTodos } from "../_shared/notificar.ts";
+import { notificar } from "../_shared/notificar.ts";
+import { avisoAlerta, avisoResultado, avisosEnVivo } from "../_shared/avisos.ts";
 import * as FS from "../_shared/flashscore.ts";
 
 const json = (d: unknown, status = 200) =>
@@ -300,6 +301,11 @@ Deno.serve(async (req) => {
   const hoy = ahora.toISOString().slice(0, 10);
   const pre: string[] = [];   // eventos de los pasos previos (agenda, cobertura, cuotas en bloque)
 
+  // Avisos a las personas (gol al instante y recordatorios): solo base de datos, en cada ciclo del cron
+  if (nPendientes > 0) {
+    try { await avisosEnVivo(cfg, (s) => pre.push(s)); } catch (e) { pre.push(`avisos: ${(e as Error).message}`); }
+  }
+
   // ---------- Agenda, cobertura y cuotas en bloque (solo en horario) ----------
   let agenda: { hay: boolean; kickoffs: number[] } = { hay: false, kickoffs: [] };
   if (cfg.usar_agenda === true && (enHorario || forzar)) {
@@ -453,7 +459,7 @@ Deno.serve(async (req) => {
   // Resuelve las alertas pendientes cuyos partidos aparecen en `porId` ya terminados
   const resolverPendientes = async (porId: Map<number, any>, permitirLote: boolean) => {
     const pendientes = await sql`
-      select a.id, a.fixture_id, a.minuto, a.goles_al_alertar, p.favorito
+      select a.id, a.fixture_id, a.minuto, a.goles_al_alertar, a.cuota, a.gol_avisado, p.favorito
       from futbol.alertas a join futbol.partidos p using (fixture_id) left join futbol.ligas l on l.id = p.liga_id
       where a.resultado = 'pendiente' and coalesce(l.habilitada, true)`;  // ligas excluidas: sin gastar consultas (DECISIONES 33)
     const faltan: number[] = [];
@@ -484,12 +490,8 @@ Deno.serve(async (req) => {
                   seguimiento = false, cierre_fuente = 'api', cerrado_ts = now(), actualizado = now() where fixture_id = ${a.fixture_id}`;
       resueltas++;
       log(`resuelta alerta ${a.id}: ${r.resultado}`);
-      await notificarTodos({
-        titulo: r.resultado === "acierto" ? "✅ Acierto" : "❌ Fallo",
-        cuerpo: `${f.teams.home.name} ${r.gl90}-${r.gv90} ${f.teams.away.name}` +
-                (r.minuto_gol ? ` · gol al ${r.minuto_gol}' (${r.lado_gol})` : ""),
-        url: "./#alertas", tag: `res-${a.id}`,
-      });
+      // "¡Gooooool de X al 88'!" (si no se avisó ya en vivo) o "No hubo gol", con el texto de cada persona
+      await avisoResultado(a as any, r, f.teams.home.name, f.teams.away.name, a.favorito);
     }
   };
 
@@ -658,11 +660,11 @@ Deno.serve(async (req) => {
       if (!info.get(id)?.con_snap && cfg.push_candidatos !== false && !ev.disparar) {
         if (info.get(id)) info.get(id).con_snap = true;
         const favNombre = fav === "home" ? f.teams.home.name : f.teams.away.name;
-        const enviados = await notificarTodos({
+        const enviados = await notificar({
           titulo: `👀 Candidato: ${favNombre} pierde ${gl}-${gv} (${minuto}')`,
           cuerpo: `${f.teams.home.name} vs ${f.teams.away.name} · ${f.league.name} · D ${dominancia.toFixed(2)} · aún sin alerta`,
           url: "./#candidatos", tag: `cand-${id}`, suave: true,
-        });
+        }, { soloAdmin: true });   // aviso técnico: solo administradores
         log(`aviso candidato ${id} push=${enviados}`);
       }
 
@@ -677,11 +679,8 @@ Deno.serve(async (req) => {
         if (nueva.length) {
           alertasNuevas++;
           const favNombre = fav === "home" ? f.teams.home.name : f.teams.away.name;
-          const enviados = await notificarTodos({
-            titulo: `⚽ ${favNombre} presiona y pierde ${gl}-${gv} (${minuto}')`,
-            cuerpo: `Over ${linea} @ ${cuotaOver.cuota} · D ${dominancia.toFixed(2)} · M ${momentum!.toFixed(2)} · ${f.league.name}`,
-            url: "./#alertas", tag: `alerta-${nueva[0].id}`,
-          });
+          // Texto para gente común (spec 1.6), con botones Entré / No entro
+          const enviados = await avisoAlerta(Number(nueva[0].id));
           await sql`update futbol.alertas set push_enviados = ${enviados} where id = ${nueva[0].id}`;
           log(`ALERTA ${nueva[0].id} ${favNombre} push=${enviados}`);
         }

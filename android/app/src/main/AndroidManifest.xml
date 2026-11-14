@@ -5,7 +5,7 @@
 
     <application
         android:name=".Aplicacion"
-        android:label="Goles widget"
+        android:label="ADN Soccer"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">

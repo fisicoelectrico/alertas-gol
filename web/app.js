@@ -1,5 +1,5 @@
 // =====================================================================
-// Alertas de Gol · frontend
+// ADN Soccer · frontend
 // Sin frameworks: cada pantalla es una función que pide JSON a la Edge Function
 // `api` y devuelve HTML. El enrutado es por hash (#vivo, #alertas…), así funciona
 // igual en GitHub Pages, en un subdominio o abierta desde el ícono de la PWA.
@@ -39,15 +39,22 @@ function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("ver");
   clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("ver"), 3500);
 }
+// Sesión del celular (acceso por enlace personal). Viaja en el header x-sesion de cada petición.
+const sesionGuardada = () => { try { return localStorage.getItem("sesion") || ""; } catch (_) { return ""; } };
+const cabeceras = (extra = {}) => { const s = sesionGuardada(); return s ? { ...extra, "x-sesion": s } : extra; };
+// Si el servidor dice que la sesión ya no sirve (enlace nuevo o acceso apagado), se avisa una vez
+function revisarSesion(r, j) {
+  if (r.status === 401 && j?.codigo === "sesion_invalida" && typeof sesionInvalida === "function") sesionInvalida();
+}
 async function get(ruta) {
-  const r = await fetch(API + ruta, { cache: "no-store" });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `Error ${r.status}`);
+  const r = await fetch(API + ruta, { cache: "no-store", headers: cabeceras() });
+  if (!r.ok) { const j = await r.json().catch(() => ({})); revisarSesion(r, j); throw new Error(j.error || `Error ${r.status}`); }
   return r.json();
 }
 async function post(ruta, cuerpo) {
-  const r = await fetch(API + ruta, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) });
+  const r = await fetch(API + ruta, { method: "POST", headers: cabeceras({ "Content-Type": "application/json" }), body: JSON.stringify(cuerpo) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || `Error ${r.status}`);
+  if (!r.ok) { revisarSesion(r, j); throw new Error(j.error || `Error ${r.status}`); }
   return j;
 }
 
@@ -56,6 +63,10 @@ async function post(ruta, cuerpo) {
 // compara contra un hash bcrypt y bloquea 15 min tras 5 intentos fallidos.
 const pinGuardado = () => localStorage.getItem("pin") || "";
 async function conPin(accion) {
+  // Con sesión de administrador el servidor no pide PIN
+  if (typeof esAdminSesion === "function" && esAdminSesion()) {
+    try { return await accion(""); } catch (e) { toast(e.message); return null; }
+  }
   let pin = pinGuardado();
   if (!pin) {
     pin = prompt("PIN de administrador:") || "";
@@ -712,32 +723,28 @@ async function desactivarPush() {
 }
 
 // ---------- enrutado ----------
+// Pantallas de Control (solo administrador): se abren desde la pestaña Control.
+const DE_CONTROL = new Set(["vivo", "radar", "alertas", "candidatos", "rendimiento", "ligas", "ajustes", "amigos"]);
 let turno = 0;
 async function navegar(silencioso = false) {
-  const tab = (location.hash.replace("#", "") || "vivo");
-  const nombre = pantallas[tab] ? tab : "vivo";
+  const pedida = location.hash.replace("#", "") || "ahora";
+  let nombre = pantallas[pedida] ? pedida : "ahora";
+  if ((DE_CONTROL.has(nombre) || nombre === "control") && !esAdmin()) nombre = "ahora";
+  const pestaña = DE_CONTROL.has(nombre) ? "control" : nombre;
   document.querySelectorAll(".tabs a").forEach((a) => {
-    const activo = a.dataset.tab === nombre;
+    const activo = a.dataset.tab === pestaña;
     a.classList.toggle("activo", activo);
     if (activo) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
   const mio = ++turno;
   if (!silencioso) vista.innerHTML = `<p class="vacio">Cargando…</p>`;
   try {
-    const html = await pantallas[nombre]();
+    let html = await pantallas[nombre]();
+    if (DE_CONTROL.has(nombre)) html = `<a class="volver" href="#control">‹ Control</a>` + html;
     if (mio === turno) vista.innerHTML = html;
-    if (nombre !== "vivo") get("/resumen").then(pintarEncabezado).catch(() => {});
+    if (esAdmin() && nombre !== "vivo") get("/resumen").then(pintarEncabezado).catch(() => {});
   } catch (e) {
     if (mio === turno && !silencioso) vista.innerHTML = `<div class="tarjeta vacio"><strong>No se pudo cargar</strong>${esc(e.message)}. Revisa tu conexión y vuelve a intentar.</div>`;
   }
 }
-addEventListener("hashchange", () => navegar());
-// Refresco automático solo en pantallas de lectura y con la app visible (no gasta batería en segundo plano)
-setInterval(() => {
-  const tab = location.hash.replace("#", "") || "vivo";
-  if (!document.hidden && (tab === "vivo" || tab === "radar" || tab === "alertas")) navegar(true);
-}, REFRESCO_MS);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) navegar(true); });
-
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
-navegar();
+// El arranque (animación, enlace, tutorial, pestañas por rol) vive en acceso.js

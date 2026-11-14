@@ -1,7 +1,7 @@
 {
-  "name": "Alertas de Gol en Vivo",
-  "short_name": "Alertas Gol",
-  "description": "Favoritos que pierden y presionan: alertas del mercado 'un gol más'.",
+  "name": "ADN Soccer",
+  "short_name": "ADN Soccer",
+  "description": "Esto no es apostar, es trading basado en estadísticas.",
   "lang": "es",
   "start_url": "./",
   "scope": "./",
