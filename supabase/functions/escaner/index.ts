@@ -262,9 +262,12 @@ Deno.serve(async (req) => {
   // marcador al ritmo rápido para saber si hubo un gol más y en qué minuto (Flashscore, sin cuota).
   const [{ cand: nCandidatos, pend: nPendientes, obs: nObservados }] = await sql`
     select (select count(*)::int from futbol.partidos where seguimiento) as cand,
-           (select count(distinct fixture_id)::int from futbol.alertas where resultado = 'pendiente') as pend,
-           (select count(*)::int from futbol.partidos p
+           (select count(distinct a.fixture_id)::int from futbol.alertas a join futbol.partidos p using (fixture_id)
+             left join futbol.ligas l on l.id = p.liga_id
+             where a.resultado = 'pendiente' and coalesce(l.habilitada, true)) as pend,
+           (select count(*)::int from futbol.partidos p left join futbol.ligas l on l.id = p.liga_id
              where not p.seguimiento and p.estado in ('1H', 'HT', '2H') and p.kickoff > now() - interval '4 hours'
+               and coalesce(l.habilitada, true)
                and ${cfg.observar_ex_candidatos !== false}
                and exists (select 1 from futbol.snapshots s where s.fixture_id = p.fixture_id)) as obs`;
   const horas: number[] = cfg.horas_activas_utc ?? [];
@@ -449,8 +452,8 @@ Deno.serve(async (req) => {
   const resolverPendientes = async (porId: Map<number, any>, permitirLote: boolean) => {
     const pendientes = await sql`
       select a.id, a.fixture_id, a.minuto, a.goles_al_alertar, p.favorito
-      from futbol.alertas a join futbol.partidos p using (fixture_id)
-      where a.resultado = 'pendiente'`;
+      from futbol.alertas a join futbol.partidos p using (fixture_id) left join futbol.ligas l on l.id = p.liga_id
+      where a.resultado = 'pendiente' and coalesce(l.habilitada, true)`;  // ligas excluidas: sin gastar consultas (DECISIONES 33)
     const faltan: number[] = [];
     const fixturesFinales = new Map<number, any>();
     for (const a of pendientes) {
@@ -744,9 +747,14 @@ Deno.serve(async (req) => {
 
       // 4. Resolver alertas pendientes cuyo partido Flashscore ya dio por terminado (1 consulta API cada una)
       const terminados = new Set(vivosFS.filter((p) => p.estado === 3).map((p) => conocidos.get(p.id)?.fixture_id).filter(Boolean));
-      const pend = (await sql`select distinct fixture_id from futbol.alertas where resultado = 'pendiente'`).map((r: any) => r.fixture_id);
+      // Solo ligas activas: una alerta de liga excluida no gasta consultas de API-Football (DECISIONES 33)
+      const pend = (await sql`select distinct a.fixture_id from futbol.alertas a join futbol.partidos p using (fixture_id)
+                              left join futbol.ligas l on l.id = p.liga_id
+                              where a.resultado = 'pendiente' and coalesce(l.habilitada, true)`).map((r: any) => r.fixture_id);
       // Red de seguridad: si Flashscore ya no lista el partido (cambió el día UTC), a las 2,5 h de la alerta se pregunta igual
-      const viejas = (await sql`select distinct fixture_id from futbol.alertas where resultado = 'pendiente' and ts < now() - interval '150 minutes'
+      const viejas = (await sql`select distinct a.fixture_id from futbol.alertas a join futbol.partidos p using (fixture_id)
+                                left join futbol.ligas l on l.id = p.liga_id
+                                where a.resultado = 'pendiente' and coalesce(l.habilitada, true) and a.ts < now() - interval '150 minutes'
                                 and extract(minute from now()) < 5`)  // como mucho una vez por hora
         .map((r: any) => r.fixture_id);
       const aResolver = [...new Set([...pend.filter((id: number) => terminados.has(id)), ...viejas])];
@@ -781,6 +789,22 @@ Deno.serve(async (req) => {
                     where fixture_id = ${fixture_id}`;
         }
         if (abiertos.length) log(`cerrados con Flashscore: ${abiertos.length}`);
+      }
+      // 4c. Alertas pendientes de ligas excluidas (DECISIONES 33): no se gasta API-Football en ellas;
+      // se cierran gratis con el marcador final de Flashscore (acierto si hubo más goles que al alertar).
+      // Quedan guardadas (ocultas en la PWA) por si la liga se vuelve a activar. No se envía push.
+      const cerradasExcl = await sql`
+        update futbol.alertas a set resultado = case when p.goles_local + p.goles_visitante > a.goles_al_alertar
+                                                     then 'acierto' else 'fallo' end, cerrada_ts = now()
+        from futbol.partidos p left join futbol.ligas l on l.id = p.liga_id
+        where a.fixture_id = p.fixture_id and a.resultado = 'pendiente' and l.habilitada = false
+          and p.estado in ('FT', 'AET', 'PEN') and p.goles_local is not null
+        returning a.id`;
+      if (cerradasExcl.length) {
+        await sql`update futbol.partidos p set goles_local_90 = coalesce(p.goles_local_90, p.goles_local),
+                    goles_visitante_90 = coalesce(p.goles_visitante_90, p.goles_visitante)
+                  from futbol.alertas a where a.fixture_id = p.fixture_id and a.id = any(${cerradasExcl.map((r: any) => r.id)}::int[])`;
+        log(`alertas de ligas excluidas cerradas con Flashscore: ${cerradasExcl.length}`);
       }
 
       // 5. Favorito con la cuota de APERTURA de las casas colombianas (gratis, una vez por partido)
@@ -852,7 +876,8 @@ Deno.serve(async (req) => {
       const ids: number[] = [...new Set((await sql`
         select fixture_id, 0 as orden from futbol.partidos where seguimiento
         union all
-        select fixture_id, 1 from futbol.alertas where resultado = 'pendiente'
+        select a.fixture_id, 1 from futbol.alertas a join futbol.partidos p using (fixture_id)
+        left join futbol.ligas l on l.id = p.liga_id where a.resultado = 'pendiente' and coalesce(l.habilitada, true)
         order by orden`).map((r: any) => r.fixture_id as number))];
       // Candidatos primero (los pendientes ya alertados solo necesitan saber si terminó)
       const alcance = ids.slice(0, maxDetalle + 2);
