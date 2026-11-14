@@ -122,3 +122,9 @@ Cada punto reemplaza o precisa lo dicho arriba. El porqué detallado está en `D
 2. **Esquema (sec. 5):** tabla `cambios_marcador` (llenada por trigger sobre `partidos`), columnas `partidos.cierre_fuente` y `partidos.cerrado_ts`, vista `v_candidatos`.
 3. **Frontend (sec. 6):** pestaña Candidatos con filtro sin alerta / con alerta / todos, tasa de gol posterior de cada grupo y evolución por partido (IP, dominancia, momentum, ataques peligrosos, córners) con el tramo del gol marcado.
 4. **Notificaciones:** push suave cuando un partido entra como candidato (una vez por partido), además de la push de alerta.
+
+## 13. Cambios propuestos para la versión 1.5 (14 nov 2026, pendientes de aprobación de Fredy)
+1. **Filtro de candidato (sec. 4), punto 4 nuevo:** si `excluir_reempate` está activo, el partido no es candidato cuando el favorito ya empató viniendo de atrás y el rival le volvió a marcar (historial de `cambios_marcador`, solo cambios donde suben los goles). Abre la regla v6. DECISIONES 34.
+2. **Ligas excluidas (sec. 5 y 6):** `ligas.habilitada = false` saca la liga al instante de todas las vistas y métricas, sin borrar sus filas; sus alertas viejas se cierran gratis con Flashscore. DECISIONES 33.
+3. **Rendimiento (sec. 5, vista `v_rendimiento`):** solo cuenta alertas de ligas activas y con minuto dentro de la ventana vigente `minuto_min`–`minuto_max`. Las demás siguen guardadas (alertas y snapshots) para el modelo de IA y vuelven a contar si la ventana se amplía o la liga se reactiva. DECISIONES 34.
+4. **Filtro de candidato (sec. 4), punto 5 nuevo:** el favorito lleva como máximo `goles_fav_max` goles (v6 con 1: entra 1-3, no entra 2-3). DECISIONES 34.

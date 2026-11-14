@@ -43,7 +43,7 @@ const EDITABLES = new Set([
   "minuto_min", "minuto_max", "cuota_fav_max", "diferencia_min", "dominancia_min", "cuota_objetivo",
   "momentum_ventana_min", "momentum_gap_min", "pesos_ip",
   "escaneo_activo", "presupuesto_diario", "reserva_api", "intervalo_radar_min", "intervalo_seguimiento_min",
-  "horas_activas_utc", "fraccion_radar", "max_detalle_escaneo", "stake", "cuotas_siempre",
+  "horas_activas_utc", "fraccion_radar", "max_detalle_escaneo", "stake", "cuotas_siempre", "excluir_reempate", "goles_fav_max",
 ]);
 // Claves que nunca salen por la API pública
 const OCULTAS = new Set(["token_forzar"]);
@@ -73,7 +73,7 @@ function validarValor(clave: string, v: unknown): boolean {
         .every((k) => typeof (v as any)[k] === "number" && Number.isFinite((v as any)[k]));
   }
   if (clave === "horas_activas_utc") return Array.isArray(v) && v.every((h) => Number.isInteger(h) && h >= 0 && h <= 23);
-  if (clave === "escaneo_activo" || clave === "cuotas_siempre") return typeof v === "boolean";
+  if (clave === "escaneo_activo" || clave === "cuotas_siempre" || clave === "excluir_reempate") return typeof v === "boolean";
   return typeof v === "number" && Number.isFinite(v) && v >= 0;
 }
 
@@ -172,7 +172,7 @@ async function radar() {
   const cfg = await leerConfig();
   return { ultimo: ultimo ?? null, historial, ligas, horas_activas_utc: cfg.horas_activas_utc,
            minuto_min: cfg.minuto_min, minuto_max: cfg.minuto_max, cuota_fav_max: cfg.cuota_fav_max,
-           diferencia_min: cfg.diferencia_min };
+           diferencia_min: cfg.diferencia_min, goles_fav_max: cfg.goles_fav_max };
 }
 
 async function alertas() {
@@ -190,10 +190,14 @@ async function rendimiento() {
   const [conteo] = await sql`select count(*) filter (where resultado='pendiente' and incluida)::int as pendientes,
                                     count(*) filter (where resultado='anulada' and incluida)::int as anuladas,
                                     count(*) filter (where incluida)::int as total,
-                                    count(*) filter (where not incluida)::int as excluidas
-                             from (select a.resultado, coalesce(l.habilitada, true) as incluida
+                                    count(*) filter (where not incluida)::int as excluidas,
+                                    count(*) filter (where incluida and not en_ventana)::int as fuera_ventana
+                             from (select a.resultado, coalesce(l.habilitada, true) as incluida,
+                                          a.minuto between coalesce((select (valor #>> '{}')::int from futbol.config where clave = 'minuto_min'), 0)
+                                                       and coalesce((select (valor #>> '{}')::int from futbol.config where clave = 'minuto_max'), 200) as en_ventana
                                    from futbol.alertas a join futbol.partidos p using (fixture_id)
                                    left join futbol.ligas l on l.id = p.liga_id) x`;
+  // DECISIONES 34: v_rendimiento y v_ligas_historial solo cuentan alertas dentro de minuto_min–minuto_max.
   const [datos] = await sql`select (select count(*)::int from futbol.snapshots) as snapshots,
                                    (select count(distinct fixture_id)::int from futbol.snapshots) as partidos_seguidos`;
   // Historial acumulado por liga (vista v_ligas_historial); la PWA lo agrupa por país.

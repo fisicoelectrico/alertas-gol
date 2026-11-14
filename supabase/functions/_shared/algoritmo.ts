@@ -42,6 +42,8 @@ export interface Regla {
   momentum_gap_min: number;
   pesos_ip: Pesos;
   patrones_copa: string[];   // nombres de competición que se descartan siempre (v3)
+  goles_fav_max: number;     // v6: goles que puede llevar el favorito (1 → entra 1-3, no entra 2-3); 99 = sin límite
+  excluir_reempate: boolean; // v6: fuera si el favorito empató viniendo de atrás y le volvieron a marcar
 }
 
 // Nombres que usa API-Football en /fixtures/statistics → nuestras claves
@@ -192,6 +194,31 @@ export interface Contexto {
   goles_local: number;
   goles_visitante: number;
   favorito: "home" | "away" | null;
+  reempate?: boolean;        // ver reempateRoto()
+}
+
+/**
+ * ¿El favorito ya empató viniendo de atrás y el rival le volvió a marcar? (DECISIONES 34, regla v6)
+ * Ejemplo: De Graafschap (fav) 0-1 al entretiempo, 1-1 al 56', 1-2 al 76'. Fredy: después de un
+ * empate que se rompe, la probabilidad de otro gol baja, así que el partido sale del radar.
+ * Recorre el historial de futbol.cambios_marcador en orden. Solo cuentan los cambios en los que
+ * SUBEN los goles: si el marcador baja (gol anulado por VAR, como RWDM 1-1 → 0-1) se corrige el
+ * estado, y si lo anulado era el empate, el empate deja de contar.
+ * Límite: si el escáner conoció el partido después del empate, no lo ve (no hay historial previo).
+ */
+export function reempateRoto(cambios: { gl_antes: number; gv_antes: number; gl: number; gv: number }[],
+                             favorito: "home" | "away" | null): boolean {
+  if (!favorito || !cambios.length) return false;
+  const dif = (gl: number, gv: number) => favorito === "home" ? gl - gv : gv - gl;  // <0 = el favorito pierde
+  let empatoDesdeAtras = false;
+  for (const c of cambios) {
+    const antes = dif(c.gl_antes, c.gv_antes), ahora = dif(c.gl, c.gv);
+    const subio = c.gl + c.gv > c.gl_antes + c.gv_antes;
+    if (!subio) { if (ahora < 0) empatoDesdeAtras = false; continue; }  // gol anulado: se deshace el empate
+    if (antes < 0 && ahora === 0) empatoDesdeAtras = true;
+    else if (empatoDesdeAtras && antes === 0 && ahora < 0) return true;
+  }
+  return false;
 }
 
 /** Filtro de candidato (no necesita estadísticas ni cuotas: se decide con el radar + cuota prepartido). */
@@ -202,6 +229,9 @@ export function filtroCandidato(c: Contexto, r: Regla): { ok: boolean; motivo?: 
   if (c.minuto < r.minuto_min || c.minuto > r.minuto_max) return { ok: false, motivo: "fuera_de_ventana", desventaja };
   if (!c.favorito) return { ok: false, motivo: "sin_favorito", desventaja };
   if (desventaja < r.diferencia_min) return { ok: false, motivo: "favorito_no_pierde", desventaja };
+  const golesFav = c.favorito === "home" ? c.goles_local : c.goles_visitante;
+  if (golesFav > r.goles_fav_max) return { ok: false, motivo: "fav_con_goles", desventaja };
+  if (r.excluir_reempate && c.reempate) return { ok: false, motivo: "reempate", desventaja };
   return { ok: true, desventaja };
 }
 
@@ -383,7 +413,7 @@ export function esCopa(nombreLiga: string | null | undefined, patrones: string[]
 export type MotivoRadar =
   | "copa" | "aislada" | "sin_cuota_pre" | "aun_no_2T" | "otro_estado" | "fuera_ventana" | "empatado"
   | "favorito_no_pierde" | "sin_favorito_claro" | "sin_consultar" | "ya_alertado"
-  | "sin_cupo" | "sin_estadisticas" | "sin_cuota_vivo" | "evaluado" | "sin_cobertura" | "tarde";
+  | "sin_cupo" | "sin_estadisticas" | "sin_cuota_vivo" | "evaluado" | "sin_cobertura" | "tarde" | "reempate" | "fav_con_goles";
 
 export function motivoRadar(x: {
   copa?: boolean;                                      // competición excluida por nombre (esCopa)
@@ -392,6 +422,7 @@ export function motivoRadar(x: {
   favorito: "home" | "away" | null;
   cuotaFav: number | null;                             // cuota prepartido del favorito
   yaAlertado: boolean;
+  reempate?: boolean;                                  // el favorito empató viniendo de atrás y le volvieron a marcar
   sinCobertura?: boolean;                              // la API (o nuestra historia) dice que la liga no trae cuotas o stats
   detalle?: "sin_estadisticas" | "sin_cuota_vivo" | "evaluado" | null;  // resultado del paso 5
 }, r: Regla): MotivoRadar {
@@ -407,6 +438,8 @@ export function motivoRadar(x: {
   if (!(x.cuotaFav !== null && x.cuotaFav <= r.cuota_fav_max)) return "sin_favorito_claro";
   const desventaja = x.favorito === "home" ? x.gv - x.gl : x.gl - x.gv;
   if (desventaja < r.diferencia_min) return "favorito_no_pierde";
+  if ((x.favorito === "home" ? x.gl : x.gv) > r.goles_fav_max) return "fav_con_goles";
+  if (r.excluir_reempate && x.reempate) return "reempate";
   if (x.yaAlertado) return "ya_alertado";
   return x.detalle ?? "sin_cupo";
 }
