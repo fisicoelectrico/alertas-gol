@@ -116,3 +116,9 @@ Cada punto reemplaza o precisa lo dicho arriba. El porqué detallado está en `D
 4. **Esquema (sec. 5):** tablas `agenda` y `cuotas_bloque`; columnas `ligas.cob_odds`, `ligas.cob_stats`, `ligas.cob_actualizada`; vista `v_cobertura_liga`; config `usar_agenda`, `cuotas_bloque_min_partidos`, `cuotas_bloque_max_dia`, `agenda_fecha`, `cobertura_ts`; motivos de radar `sin_cobertura` y `tarde`; motivo de escaneo `previa`.
 5. **No cambia la regla:** sigue la v3. Ver DECISIONES 27.
 6. **Fuente Flashscore (regla v4, DECISIONES 28):** con `config.fuente_datos = flashscore`, lista en vivo, favorito (cuota de apertura 1X2, casas colombianas) y estadísticas salen de Flashscore; API-Football solo para agenda, cuota en vivo del Over y resolución. Tabla `fs_partidos`; config `fuente_datos` (es_regla), `intervalo_fs_min`, `fs_cuotas_por_ciclo`; motivo de escaneo `fs`.
+
+## 12. Cambios propuestos para la versión 1.4 (14 nov 2026, pendientes de aprobación de Fredy)
+1. **Resolución de candidatos (amplía la sec. 4, "Resolución"):** además de las alertas, se resuelve todo candidato (partido con snapshot de estadísticas): ¿hubo ≥1 gol después de su primer snapshot?, ¿en qué tramo de minutos?, ¿de quién? El marcador final de los partidos sin alerta sale de Flashscore (gratis); las alertas se siguen resolviendo con API-Football. Ver DECISIONES 32.
+2. **Esquema (sec. 5):** tabla `cambios_marcador` (llenada por trigger sobre `partidos`), columnas `partidos.cierre_fuente` y `partidos.cerrado_ts`, vista `v_candidatos`.
+3. **Frontend (sec. 6):** pestaña Candidatos con filtro sin alerta / con alerta / todos, tasa de gol posterior de cada grupo y evolución por partido (IP, dominancia, momentum, ataques peligrosos, córners) con el tramo del gol marcado.
+4. **Notificaciones:** push suave cuando un partido entra como candidato (una vez por partido), además de la push de alerta.

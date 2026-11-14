@@ -5,7 +5,7 @@
 //  2) Guardar el cascarón de la app (HTML/CSS/JS) para que abra al instante y sin red.
 // Los DATOS nunca se guardan en caché: siempre se piden frescos a la API.
 // =====================================================================
-const VERSION = "v5";
+const VERSION = "v6";
 const CACHE = `alertas-gol-${VERSION}`;
 const CASCARON = ["./", "index.html", "styles.css", "app.js", "config.js", "manifest.webmanifest", "icons/icon-192.png"];
 
@@ -43,8 +43,9 @@ self.addEventListener("push", (e) => {
     icon: "icons/icon-192.png",
     badge: "icons/badge-96.png",
     tag: d.tag || undefined,      // mismo tag = reemplaza la notificación anterior en vez de apilar
-    renotify: !!d.tag,
-    vibrate: [200, 100, 200],
+    renotify: !!d.tag && !d.suave,
+    // Alerta: doble vibración. Aviso de candidato ("suave"): una sola corta, para distinguirlos sin mirar.
+    vibrate: d.suave ? [120] : [200, 100, 200],
     data: { url: d.url || "./" },
   }));
 });
