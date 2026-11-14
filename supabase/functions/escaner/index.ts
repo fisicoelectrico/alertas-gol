@@ -759,7 +759,9 @@ Deno.serve(async (req) => {
       for (const f of candidatosFS.slice(0, maxDetalle)) {
         try {
           const s = await FS.estadisticas(f.__fs.id);
-          conStatsFS.set(f.fixture.id, { ...f, statistics: s.local.length ? [{ team: { id: 1 }, statistics: s.local }, { team: { id: 2 }, statistics: s.visitante }] : [] });
+          // __extra: todas las estadísticas de Flashscore (xGOT, ocasiones claras, toques en el área…). Quedan en
+          // snapshots.raw.fixture.__extra para calibrar la v5 con datos reales; hoy no pesan en la fórmula.
+          conStatsFS.set(f.fixture.id, { ...f, __extra: s.extra, statistics: s.local.length ? [{ team: { id: 1 }, statistics: s.local }, { team: { id: 2 }, statistics: s.visitante }] : [] });
         } catch (e) {
           log(`fs stats ${f.__fs.id}: ${(e as Error).message}`);
           conStatsFS.set(f.fixture.id, { ...f, statistics: [] });
