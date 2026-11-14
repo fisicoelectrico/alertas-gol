@@ -25,14 +25,27 @@
 //   POST /admin/liga        { pin, id, habilitada }
 //   POST /admin/push-prueba { pin }
 //   POST /admin/pin         { pin, nuevo }
+//
+// Acceso de amigos (especificación 1.6). Cada petición puede traer el header `x-sesion` (token del
+// celular). Con config.modo_acceso = 'abierto' todo funciona como antes, sin sesión; con 'cerrado'
+// solo entra quien tiene sesión, y lo técnico (radar, candidatos, ligas, rendimiento, ajustes) es
+// solo para administradores. Lo de administrador acepta la sesión admin o el PIN (respaldo).
+//   GET  /yo                  quién soy (o usuario null) y el modo de acceso
+//   GET  /mi-banca            mi yield, el del radar en el mismo periodo, mis movimientos
+//   POST /mi-banca            { banca_inicial }
+//   POST /entradas            { alerta_id, decision: entre|no_entro|borrar, monto?, cuota?, origen? }
+//   POST /acceso/canjear      { token } → { sesion, usuario }   (público: el enlace de WhatsApp)
+//   POST /admin/usuarios      { accion: listar|crear|enlace|activo|editar, ... }
+//   POST /admin/acceso        { modo: abierto|cerrado }
 // =====================================================================
 import { sql, leerConfig } from "../_shared/db.ts";
-import { notificarTodos } from "../_shared/notificar.ts";
+import { notificar } from "../_shared/notificar.ts";
+import { canjear, enlaceNuevo, leerSesion, modoAcceso, normalizarTelefono, Sesion } from "../_shared/acceso.ts";
 import { estadoPresupuesto } from "../_shared/apifootball.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-sesion",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 const json = (d: unknown, status = 200) =>
@@ -175,12 +188,151 @@ async function radar() {
            diferencia_min: cfg.diferencia_min, goles_fav_max: cfg.goles_fav_max };
 }
 
-async function alertas() {
+// Con sesión, cada alerta trae lo que marcó esa persona (mi_decision, mi_monto, mi_cuota) y,
+// para el admin, cuántos amigos entraron. cuota_actual = la última cuota vista después de la alerta.
+async function alertas(yo: Sesion | null) {
+  const uid = yo?.usuario_id ?? -1;
   return await sql`
-    select a.*, p.local, p.visitante, p.favorito, p.goles_local_90, p.goles_visitante_90, l.nombre as liga
+    select a.*, p.local, p.visitante, p.favorito, p.goles_local_90, p.goles_visitante_90, l.nombre as liga, l.pais,
+           p.estado, p.minuto as minuto_actual, p.goles_local, p.goles_visitante,
+           e.decision as mi_decision, e.monto as mi_monto, e.cuota as mi_cuota,
+           (select count(*)::int from futbol.entradas x where x.alerta_id = a.id and x.decision = 'entre') as entraron,
+           (select s.cuota_over from futbol.snapshots s where s.fixture_id = a.fixture_id and s.ts > a.ts and s.cuota_over is not null
+             order by s.ts desc limit 1) as cuota_actual,
+           a.minuto between coalesce((select (valor #>> '{}')::int from futbol.config where clave = 'minuto_min'), 0)
+                        and coalesce((select (valor #>> '{}')::int from futbol.config where clave = 'minuto_max'), 200) as en_ventana
     from futbol.alertas a join futbol.partidos p using (fixture_id) left join futbol.ligas l on l.id = p.liga_id
+    left join futbol.entradas e on e.alerta_id = a.id and e.usuario_id = ${uid}
     where coalesce(l.habilitada, true)
     order by a.ts desc limit 200`;
+}
+
+// ---------- Acceso de amigos ----------
+// Métricas del radar "entrando en todas" (stake 1) desde una fecha. Igual que v_rendimiento: solo
+// ligas activas y alertas dentro de la ventana de minutos (DECISIONES 34).
+async function metricasRadar(desde: string | null) {
+  const [r] = await sql`
+    select count(*) filter (where a.resultado in ('acierto','fallo'))::int as cerradas,
+           count(*) filter (where a.resultado = 'acierto')::int as aciertos,
+           coalesce(sum(case when a.resultado = 'acierto' then a.cuota - 1 when a.resultado = 'fallo' then -1 end), 0)::float8 as ganancia_u
+    from futbol.alertas a join futbol.partidos p using (fixture_id) left join futbol.ligas l on l.id = p.liga_id
+    where coalesce(l.habilitada, true) and a.ts >= coalesce(${desde}::timestamptz, '-infinity'::timestamptz)
+      and a.minuto between coalesce((select (valor #>> '{}')::int from futbol.config where clave = 'minuto_min'), 0)
+                       and coalesce((select (valor #>> '{}')::int from futbol.config where clave = 'minuto_max'), 200)`;
+  return { ...r, yield_pct: r.cerradas ? Math.round(1000 * r.ganancia_u / r.cerradas) / 10 : null };
+}
+
+async function miBanca(yo: Sesion) {
+  const movimientos = await sql`
+    select e.alerta_id, e.decision, e.monto, coalesce(e.cuota, a.cuota) as cuota, e.ts, a.resultado, a.minuto, a.minuto_gol,
+           a.marcador, p.local, p.visitante,
+           case when e.decision <> 'entre' then null
+                when a.resultado = 'acierto' then coalesce(e.monto, 1) * (coalesce(e.cuota, a.cuota) - 1)
+                when a.resultado = 'fallo' then -coalesce(e.monto, 1) end::float8 as ganancia
+    from futbol.entradas e join futbol.alertas a on a.id = e.alerta_id join futbol.partidos p using (fixture_id)
+    where e.usuario_id = ${yo.usuario_id} order by e.ts desc limit 200`;
+  const entre = movimientos.filter((m: any) => m.decision === "entre");
+  const cerr = entre.filter((m: any) => m.resultado === "acierto" || m.resultado === "fallo");
+  const invertido = cerr.reduce((t: number, m: any) => t + Number(m.monto ?? 1), 0);
+  const ganancia = cerr.reduce((t: number, m: any) => t + Number(m.ganancia), 0);
+  // Plata real: solo las entradas con monto (sin monto cuentan para el yield, no para la banca)
+  const conMonto = cerr.filter((m: any) => m.monto != null);
+  const montos = entre.filter((m: any) => m.monto != null).map((m: any) => Number(m.monto));
+  return {
+    banca_inicial: yo.banca_inicial,
+    yo: {
+      entradas: entre.length, cerradas: cerr.length, aciertos: cerr.filter((m: any) => m.resultado === "acierto").length,
+      invertido, ganancia, yield_pct: invertido ? Math.round(1000 * ganancia / invertido) / 10 : null,
+      ganancia_pesos: conMonto.reduce((t: number, m: any) => t + Number(m.ganancia), 0),
+      invertido_pesos: conMonto.reduce((t: number, m: any) => t + Number(m.monto), 0),
+    },
+    radar: await metricasRadar(yo.creado),
+    radar_total: await metricasRadar(null),
+    desde: yo.creado,
+    stake_ref: montos.length ? Math.round(montos.reduce((a: number, b: number) => a + b, 0) / montos.length) : null,
+    movimientos,
+  };
+}
+
+async function marcarEntrada(yo: Sesion, b: any) {
+  const alertaId = Number(b?.alerta_id);
+  const decision = String(b?.decision ?? "");
+  if (!Number.isInteger(alertaId) || !["entre", "no_entro", "borrar"].includes(decision)) return { error: "datos inválidos" };
+  const [a] = await sql`select resultado, gol_avisado from futbol.alertas where id = ${alertaId}`;
+  if (!a) return { error: "esa alerta no existe" };
+  // Poka-yoke: solo se marca mientras la alerta está abierta y antes del gol. Así nadie "entra" sabiendo el resultado.
+  if (a.resultado !== "pendiente" || a.gol_avisado) return { error: "Esta alerta ya se cerró; solo se puede marcar mientras sigue abierta." };
+  if (decision === "borrar") {
+    await sql`delete from futbol.entradas where usuario_id = ${yo.usuario_id} and alerta_id = ${alertaId}`;
+    return { ok: true };
+  }
+  const monto = b?.monto == null || b.monto === "" ? null : Math.round(Number(b.monto));
+  const cuota = b?.cuota == null || b.cuota === "" ? null : Number(b.cuota);
+  if (monto !== null && !(monto > 0 && monto < 1e12)) return { error: "monto inválido" };
+  if (cuota !== null && !(cuota > 1 && cuota < 100)) return { error: "cuota inválida" };
+  const origen = b?.origen === "notificacion" ? "notificacion" : "app";
+  // Desde la notificación no llega monto: se conserva el que ya hubiera escrito en la app
+  const conservar = origen === "notificacion";
+  const m = decision === "entre" ? monto : null, c = decision === "entre" ? cuota : null;
+  await sql`
+    insert into futbol.entradas (usuario_id, alerta_id, decision, monto, cuota, origen)
+    values (${yo.usuario_id}, ${alertaId}, ${decision}, ${m}, ${c}, ${origen})
+    on conflict (usuario_id, alerta_id) do update set
+      decision = excluded.decision, ts = now(), origen = excluded.origen,
+      monto = case when excluded.decision <> 'entre' then null when ${conservar} then coalesce(excluded.monto, futbol.entradas.monto) else excluded.monto end,
+      cuota = case when excluded.decision <> 'entre' then null when ${conservar} then coalesce(excluded.cuota, futbol.entradas.cuota) else excluded.cuota end`;
+  return { ok: true };
+}
+
+async function listarUsuarios() {
+  return await sql`
+    select u.id, u.nombre, u.telefono, u.rol, u.activo, u.creado, u.ultimo_acceso,
+           (select count(*)::int from futbol.sesiones s where s.usuario_id = u.id and s.revocada is null) as sesiones,
+           (select max(i.vence) from futbol.invitaciones i where i.usuario_id = u.id and i.usada is null and i.vence > now()) as enlace_vence,
+           (select count(*)::int from futbol.push_suscripciones p where p.usuario_id = u.id and p.activa) as avisos,
+           y.cerradas, y.aciertos, y.yield_pct,
+           (select count(*)::int from futbol.entradas e where e.usuario_id = u.id and e.decision = 'entre') as entradas
+    from futbol.usuarios u left join futbol.v_yield_usuario y on y.usuario_id = u.id
+    order by u.activo desc, u.rol, u.nombre`;
+}
+
+async function adminUsuarios(b: any, yo: Sesion | null) {
+  const accion = String(b?.accion ?? "listar");
+  if (accion === "listar") return { usuarios: await listarUsuarios(), modo_acceso: await modoAcceso() };
+  if (accion === "crear") {
+    const nombre = String(b?.nombre ?? "").trim().slice(0, 60);
+    if (!nombre) return { error: "Escribe el nombre" };
+    const tel = b?.telefono ? normalizarTelefono(b.telefono) : null;
+    if (b?.telefono && !tel) return { error: "Número de WhatsApp inválido (ej. 3001234567)" };
+    if (tel && (await sql`select 1 from futbol.usuarios where telefono = ${tel}`).length) return { error: "Ese número ya tiene acceso" };
+    const rol = b?.rol === "admin" ? "admin" : "visor";
+    const [u] = await sql`insert into futbol.usuarios (nombre, telefono, rol) values (${nombre}, ${tel}, ${rol}) returning id, nombre, telefono`;
+    return { ok: true, usuario: u, ...(await enlaceNuevo(Number(u.id))) };
+  }
+  const id = Number(b?.id);
+  const [u] = await sql`select id, nombre, telefono, rol, activo from futbol.usuarios where id = ${Number.isInteger(id) ? id : -1}`;
+  if (!u) return { error: "No existe esa persona" };
+  if (accion === "enlace") return { ok: true, usuario: u, ...(await enlaceNuevo(Number(u.id))) };
+  if (accion === "activo") {
+    const activo = !!b?.activo;
+    if (!activo && u.rol === "admin") {
+      if (yo && yo.usuario_id === Number(u.id)) return { error: "No puedes apagar tu propio acceso" };
+      const [{ n }] = await sql`select count(*)::int as n from futbol.usuarios where rol = 'admin' and activo`;
+      if (n <= 1) return { error: "Debe quedar al menos un administrador activo" };
+    }
+    await sql`update futbol.usuarios set activo = ${activo} where id = ${u.id}`;
+    return { ok: true };
+  }
+  if (accion === "editar") {
+    const nombre = b?.nombre == null ? u.nombre : String(b.nombre).trim().slice(0, 60);
+    const tel = b?.telefono === undefined ? u.telefono : b.telefono ? normalizarTelefono(b.telefono) : null;
+    if (!nombre) return { error: "Escribe el nombre" };
+    if (b?.telefono && !tel) return { error: "Número de WhatsApp inválido" };
+    if (tel && (await sql`select 1 from futbol.usuarios where telefono = ${tel} and id <> ${u.id}`).length) return { error: "Ese número ya tiene acceso" };
+    await sql`update futbol.usuarios set nombre = ${nombre}, telefono = ${tel} where id = ${u.id}`;
+    return { ok: true };
+  }
+  return { error: "acción desconocida" };
 }
 
 async function rendimiento() {
@@ -294,14 +446,33 @@ async function cambiarConfig(cambios: Record<string, unknown>, nota?: string) {
   });
 }
 
+// Rutas que funcionan siempre sin sesión
+const PUBLICAS_GET = new Set(["/vapid", "/widget", "/yo"]);
+// Lo técnico: con modo cerrado, solo administradores
+const SOLO_ADMIN_GET = new Set(["/radar", "/rendimiento", "/ligas", "/candidatos", "/config", "/snapshots"]);
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   const url = new URL(req.url);
   const ruta = url.pathname.replace(/^.*\/api/, "") || "/";
   try {
+    const leida = await leerSesion(req);
+    const yo = leida === "invalida" ? null : leida;
+    const abierto = (await modoAcceso()) === "abierto";
+    const sinSesion = () => json({ error: leida === "invalida" ? "Tu acceso ya no es válido. Pídele a Fredy un enlace nuevo." : "Entra con tu enlace personal.", codigo: leida === "invalida" ? "sesion_invalida" : "sin_sesion" }, 401);
+
     if (req.method === "GET") {
+      if (!PUBLICAS_GET.has(ruta)) {
+        if (!abierto && !yo) return sinSesion();
+        if (!abierto && SOLO_ADMIN_GET.has(ruta) && yo!.rol !== "admin") return json({ error: "Solo para administradores" }, 403);
+      }
+      if (ruta === "/yo") {
+        return json({ modo_acceso: abierto ? "abierto" : "cerrado", sesion_invalida: leida === "invalida",
+                      usuario: yo ? { id: yo.usuario_id, nombre: yo.nombre, rol: yo.rol, banca_inicial: yo.banca_inicial } : null });
+      }
+      if (ruta === "/mi-banca") return yo ? json(await miBanca(yo)) : sinSesion();
       if (ruta === "/resumen") return json(await resumen());
-      if (ruta === "/alertas") return json(await alertas());
+      if (ruta === "/alertas") return json(await alertas(yo));
       if (ruta === "/radar") return json(await radar());
       if (ruta === "/widget") return json(await widget());
       if (ruta === "/rendimiento") return json(await rendimiento());
@@ -321,14 +492,37 @@ Deno.serve(async (req) => {
     if (req.method !== "POST") return json({ error: "método no permitido" }, 405);
     const body = await req.json().catch(() => ({}));
 
+    // El enlace de WhatsApp: público por definición (el token es la credencial)
+    if (ruta === "/acceso/canjear") {
+      const r = await canjear(body?.token, req.headers.get("user-agent"));
+      return json(r, (r as any).error ? 400 : 200);
+    }
+    if (ruta === "/entradas") {
+      if (!yo) return sinSesion();
+      const r = await marcarEntrada(yo, body);
+      return json(r, (r as any).error ? 400 : 200);
+    }
+    if (ruta === "/mi-banca") {
+      if (!yo) return sinSesion();
+      const v = body?.banca_inicial;
+      const banca = v == null || v === "" ? null : Math.round(Number(v));
+      if (banca !== null && !(banca >= 0 && banca < 1e12)) return json({ error: "valor inválido" }, 400);
+      await sql`update futbol.usuarios set banca_inicial = ${banca} where id = ${yo.usuario_id}`;
+      return json({ ok: true });
+    }
+
     if (ruta === "/suscribir") {
+      if (!abierto && !yo) return sinSesion();
       const { endpoint, keys } = body ?? {};
       if (typeof endpoint !== "string" || !endpoint.startsWith("https://") || !keys?.p256dh || !keys?.auth) {
         return json({ error: "suscripción inválida" }, 400);
       }
-      await sql`insert into futbol.push_suscripciones (endpoint, p256dh, auth)
-                values (${endpoint}, ${keys.p256dh}, ${keys.auth})
-                on conflict (endpoint) do update set p256dh = excluded.p256dh, auth = excluded.auth, activa = true, fallos = 0`;
+      // La suscripción queda ligada a la persona (recordatorios, apagar acceso, avisos solo admin)
+      const uid = yo?.usuario_id ?? null;
+      await sql`insert into futbol.push_suscripciones (endpoint, p256dh, auth, usuario_id)
+                values (${endpoint}, ${keys.p256dh}, ${keys.auth}, ${uid})
+                on conflict (endpoint) do update set p256dh = excluded.p256dh, auth = excluded.auth, activa = true, fallos = 0,
+                  usuario_id = coalesce(excluded.usuario_id, futbol.push_suscripciones.usuario_id)`;
       return json({ ok: true });
     }
     if (ruta === "/desuscribir") {
@@ -337,8 +531,11 @@ Deno.serve(async (req) => {
     }
 
     if (ruta.startsWith("/admin/")) {
-      const v = await verificarPin(body?.pin);
-      if (!v.ok) return json({ error: v.error }, 401);
+      // Administrador: sesión admin, o el PIN como respaldo mientras Fredy confirma su enlace
+      if (yo?.rol !== "admin") {
+        const v = await verificarPin(body?.pin);
+        if (!v.ok) return json({ error: v.error }, 401);
+      }
       if (ruta === "/admin/verificar") return json({ ok: true });
       if (ruta === "/admin/config") {
         const r = await cambiarConfig(body.cambios, body.nota);
@@ -351,13 +548,30 @@ Deno.serve(async (req) => {
         return json({ ok: true });
       }
       if (ruta === "/admin/push-prueba") {
-        const n = await notificarTodos({ titulo: "🔔 Prueba de Alertas de Gol", cuerpo: "Si ves esto, las notificaciones funcionan.", url: "./#ajustes", tag: "prueba" });
+        const n = await notificar({ titulo: "🔔 Prueba de ADN Soccer", cuerpo: "Si ves esto, las notificaciones funcionan.", url: "./#ajustes", tag: "prueba" },
+                                  { soloAdmin: true });
         return json({ ok: true, enviados: n });
       }
       if (ruta === "/admin/pin") {
         if (typeof body.nuevo !== "string" || !/^\d{6,12}$/.test(body.nuevo)) return json({ error: "El PIN nuevo debe tener 6 a 12 dígitos" }, 400);
         await sql`update futbol.admin set pin_hash = extensions.crypt(${body.nuevo}, extensions.gen_salt('bf', 10)), actualizado = now() where id = 1`;
         return json({ ok: true });
+      }
+      if (ruta === "/admin/usuarios") {
+        const r = await adminUsuarios(body, yo);
+        return json(r, (r as any).error ? 400 : 200);
+      }
+      if (ruta === "/admin/acceso") {
+        const modo = body?.modo === "cerrado" ? "cerrado" : body?.modo === "abierto" ? "abierto" : null;
+        if (!modo) return json({ error: "modo inválido" }, 400);
+        // Poka-yoke: no se puede cerrar la app si nadie con rol admin tiene una sesión activa (Fredy quedaría por fuera)
+        if (modo === "cerrado") {
+          const [{ n }] = await sql`select count(*)::int as n from futbol.sesiones s join futbol.usuarios u on u.id = s.usuario_id
+                                    where s.revocada is null and u.activo and u.rol = 'admin'`;
+          if (!n) return json({ error: "Primero abre tu enlace de administrador en tu celular; si no, quedarías por fuera." }, 400);
+        }
+        await sql`update futbol.config set valor = ${sql.json(modo)}, actualizado = now() where clave = 'modo_acceso'`;
+        return json({ ok: true, modo_acceso: modo });
       }
     }
     return json({ error: "ruta no encontrada" }, 404);

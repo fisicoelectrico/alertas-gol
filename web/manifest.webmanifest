@@ -1,7 +1,7 @@
 {
   "name": "ADN Soccer",
   "short_name": "ADN Soccer",
-  "description": "Favoritos que pierden y presionan: alertas del mercado 'un gol más'.",
+  "description": "Esto no es apostar, es trading basado en estadísticas.",
   "lang": "es",
   "start_url": "./",
   "scope": "./",
