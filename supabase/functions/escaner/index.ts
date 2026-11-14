@@ -42,6 +42,7 @@ import { sql, leerConfig, Config } from "../_shared/db.ts";
 import { ApiFootball, estadoPresupuesto, SinPresupuesto, verificarCuotaReal } from "../_shared/apifootball.ts";
 import * as A from "../_shared/algoritmo.ts";
 import { notificarTodos } from "../_shared/notificar.ts";
+import * as FS from "../_shared/flashscore.ts";
 
 const json = (d: unknown, status = 200) =>
   new Response(JSON.stringify(d, null, 2), { status, headers: { "Content-Type": "application/json" } });
@@ -277,7 +278,11 @@ Deno.serve(async (req) => {
     await verificarCuotaReal(key);
     est = await estadoPresupuesto(cfg);
   }
-  if (est.disponibles < 1) return json({ motivo: "presupuesto_agotado", presupuesto: est });
+  // Modo Flashscore (regla v4): la lista, el favorito y las estadísticas salen de Flashscore sin gastar
+  // cuota; API-Football queda para la agenda (1/día), la cuota en vivo del Over y resolver alertas.
+  // Por eso sigue corriendo aunque la cuota de API-Football esté agotada (solo no podrá pedir la cuota en vivo).
+  const modoFS = cfg.fuente_datos === "flashscore";
+  if (est.disponibles < 1 && !modoFS) return json({ motivo: "presupuesto_agotado", presupuesto: est });
 
   const api = new ApiFootball(key, est);
   const regla = reglaDesde(cfg);
@@ -291,7 +296,7 @@ Deno.serve(async (req) => {
       await cargarCobertura(api, cfg, pre);
       await cargarAgenda(api, hoy, regla, pre);
       agenda = await kickoffsUtiles(hoy, regla);
-      await cuotasEnBloque(api, cfg, hoy, pre);
+      if (!modoFS) await cuotasEnBloque(api, cfg, hoy, pre);
       if (pre.some((e) => e.startsWith("cuotas bloque"))) agenda = await kickoffsUtiles(hoy, regla);
     } catch (e) {
       if (!(e instanceof SinPresupuesto)) pre.push(`agenda: ${(e as Error).message}`);
@@ -336,10 +341,13 @@ Deno.serve(async (req) => {
   const marcar = (clave: string) =>
     sql`update futbol.config set valor = to_jsonb(now()::text), actualizado = now() where clave = ${clave}`;
 
-  let modo: "radar" | "seguimiento" | null = null;
+  let modo: "radar" | "seguimiento" | "fs" | null = null;
   // Sin partidos útiles en zona no hay nada que el radar pueda encontrar: no se gasta.
   const radarUtil = forzar || enZona === null || enZona > 0;
-  if ((enHorario || forzar) && radarUtil && await reservar("ultimo_radar", intervaloRadar)) modo = "radar";
+  if (modoFS) {
+    if ((enHorario || forzar || nCandidatos > 0 || nPendientes > 0) &&
+        await reservar("ultimo_fs", forzar ? 0.5 : Number(cfg.intervalo_fs_min ?? 5))) modo = "fs";
+  } else if ((enHorario || forzar) && radarUtil && await reservar("ultimo_radar", intervaloRadar)) modo = "radar";
   else if ((nCandidatos > 0 || nPendientes > 0) && await reservar("ultimo_seguimiento", intervaloSeg)) modo = "seguimiento";
   if (!modo) {
     if (api.llamadas > 0) await bitacoraPrevia(api.llamadas, pre, t0);
@@ -349,7 +357,8 @@ Deno.serve(async (req) => {
   if (modo === "radar") await marcar("ultimo_seguimiento");
 
   const detalle: Record<string, unknown> = {
-    modo, intervalo_min: modo === "radar" ? intervaloRadar : intervaloSeg, regla: regla.version, eventos: [...pre] as string[],
+    modo, intervalo_min: modo === "radar" ? intervaloRadar : modo === "fs" ? Number(cfg.intervalo_fs_min ?? 5) : intervaloSeg,
+    regla: regla.version, eventos: [...pre] as string[],
     en_zona: enZona,
   };
   const log = (s: string) => (detalle.eventos as string[]).push(s);
@@ -524,7 +533,7 @@ Deno.serve(async (req) => {
       // Estadísticas: vienen dentro del fixture. Si la clave ni siquiera existe (respuesta distinta
       // a la esperada), se cae al endpoint dedicado para no quedarnos ciegos.
       let equipos: any[] = Array.isArray(f.statistics) ? f.statistics : [];
-      let fuenteStats = "fixtures?id";
+      let fuenteStats = f.__fuente ?? "fixtures?id";
       if (!Array.isArray(f.statistics) && api.quedan() > 0) {
         equipos = (await api.get("/fixtures/statistics", { fixture: id })).response ?? [];
         fuenteStats = "fixtures/statistics";
@@ -642,6 +651,123 @@ Deno.serve(async (req) => {
   try {
     for (const r of await sql`select fixture_id from futbol.alertas where regla_version = ${regla.version}`) {
       yaAlertados.add(r.fixture_id);
+    }
+
+
+    if (modo === "fs") {
+      // ================= CICLO FLASHSCORE (regla v4) =================
+      // 1. Lista del día (gratis). Copas fuera por nombre, igual que en v3.
+      const listaFS = (await FS.listaDia(0)).filter((p) => !A.esCopa(p.liga, regla.patrones_copa));
+      const vivosFS = listaFS.filter((p) => p.estado === 2 || p.estado === 3);
+      vivos = listaFS.filter((p) => p.estado === 2).length;
+
+      // 2. Emparejar con API-Football usando la agenda (cada partido una sola vez; queda en fs_partidos)
+      const conocidos = new Map<string, any>();
+      if (vivosFS.length) {
+        for (const r of await sql`select * from futbol.fs_partidos where fs_id = any(${vivosFS.map((p) => p.id)}::text[])`) conocidos.set(r.fs_id, r);
+      }
+      const nuevos = vivosFS.filter((p) => p.estado === 2 && !conocidos.get(p.id)?.fixture_id);
+      if (nuevos.length) {
+        const desde = new Date(Math.min(...nuevos.map((p) => p.inicio)) - 20 * 60000).toISOString();
+        const hasta = new Date(Math.max(...nuevos.map((p) => p.inicio)) + 20 * 60000).toISOString();
+        const ag = (await sql`select fixture_id, local, visitante, kickoff from futbol.agenda where kickoff between ${desde} and ${hasta}`)
+          .map((r: any) => ({ fixture_id: r.fixture_id, local: r.local, visitante: r.visitante, kickoff: new Date(r.kickoff).getTime() }));
+        const mapa = FS.emparejar(nuevos, ag);
+        for (const p of nuevos) {
+          const m = mapa.get(p.id);
+          const [fila] = await sql`
+            insert into futbol.fs_partidos (fs_id, fixture_id, puntaje, liga, local, visitante, inicio, id_local, id_visitante)
+            values (${p.id}, ${m?.fixture_id ?? null}, ${m?.puntaje ?? null}, ${p.liga}, ${p.local}, ${p.visitante},
+                    ${new Date(p.inicio).toISOString()}, ${p.idLocal}, ${p.idVisitante})
+            on conflict (fs_id) do update set fixture_id = coalesce(futbol.fs_partidos.fixture_id, excluded.fixture_id),
+              puntaje = coalesce(futbol.fs_partidos.puntaje, excluded.puntaje)
+            returning *`;
+          conocidos.set(p.id, fila);
+        }
+        log(`fs: ${mapa.size}/${nuevos.length} partidos nuevos emparejados con API-Football`);
+      }
+
+      // 3. Convertir a la forma de API-Football para reutilizar todo el resto del escáner
+      const agendaInfo = new Map<number, any>();
+      const idsApi = [...conocidos.values()].map((r) => r.fixture_id).filter(Boolean);
+      if (idsApi.length) {
+        for (const r of await sql`select a.fixture_id, a.liga_id, a.temporada, l.nombre, l.pais from futbol.agenda a
+                                   left join futbol.ligas l on l.id = a.liga_id where a.fixture_id = any(${idsApi}::int[])`) agendaInfo.set(r.fixture_id, r);
+      }
+      const comoApi = (p: FS.PartidoFS, fixtureId: number) => {
+        const em = FS.estadoYMinuto(p);
+        const ai = agendaInfo.get(fixtureId);
+        return {
+          __fs: p, __fuente: "flashscore",
+          fixture: { id: fixtureId, date: new Date(p.inicio).toISOString(), status: { short: em.estado, elapsed: em.minuto } },
+          league: { id: ai?.liga_id ?? 0, name: ai?.nombre ?? p.liga, country: ai?.pais ?? null, season: ai?.temporada ?? null },
+          teams: { home: { id: 1, name: p.local }, away: { id: 2, name: p.visitante } },
+          goals: { home: p.gl, away: p.gv },
+        };
+      };
+      const enVivo = vivosFS.filter((p) => p.estado === 2 && conocidos.get(p.id)?.fixture_id && agendaInfo.has(conocidos.get(p.id).fixture_id))
+        .map((p) => comoApi(p, conocidos.get(p.id).fixture_id));
+      lista = enVivo;
+      const porIdFS = new Map<number, any>(enVivo.map((f) => [f.fixture.id, f]));
+      const idsVivosFS = [...porIdFS.keys()];
+      await guardarPartidos(enVivo);
+      await sql`update futbol.partidos set seguimiento = false where seguimiento and not (fixture_id = any(${idsVivosFS}::int[]))`;
+
+      // 4. Resolver alertas pendientes cuyo partido Flashscore ya dio por terminado (1 consulta API cada una)
+      const terminados = new Set(vivosFS.filter((p) => p.estado === 3).map((p) => conocidos.get(p.id)?.fixture_id).filter(Boolean));
+      const pend = (await sql`select distinct fixture_id from futbol.alertas where resultado = 'pendiente'`).map((r: any) => r.fixture_id);
+      // Red de seguridad: si Flashscore ya no lista el partido (cambió el día UTC), a las 2,5 h de la alerta se pregunta igual
+      const viejas = (await sql`select distinct fixture_id from futbol.alertas where resultado = 'pendiente' and ts < now() - interval '150 minutes'
+                                and extract(minute from now()) < 5`)  // como mucho una vez por hora
+        .map((r: any) => r.fixture_id);
+      const aResolver = [...new Set([...pend.filter((id: number) => terminados.has(id)), ...viejas])];
+      if (aResolver.length) await resolverPendientes(await fixturesPorId(aResolver.slice(0, 3)), false);
+
+      // 5. Favorito con la cuota de APERTURA de las casas colombianas (gratis, una vez por partido)
+      await cargarInfo(idsVivosFS);
+      let cupoCuotas = Number(cfg.fs_cuotas_por_ciclo ?? 8);
+      for (const f of enVivo) {
+        const i = info.get(f.fixture.id);
+        if (!i?.habilitada || i.cuota_pre_consultada) continue;
+        const st = f.fixture.status;
+        if (st.short === "2H" && (st.elapsed ?? 0) > A.limiteTarde(regla)) continue;
+        if (!A.preCandidato(st.short, st.elapsed ?? 0, f.goals.home, f.goals.away, regla)) continue;
+        if (cupoCuotas-- <= 0) break;
+        const p: FS.PartidoFS = f.__fs;
+        let c: FS.CuotasFS | null = null;
+        try { c = await FS.cuotas(p.id, p.idLocal, p.idVisitante); } catch (e) { log(`fs cuotas ${p.id}: ${(e as Error).message}`); continue; }
+        const ap = c.apertura ?? c.actual;
+        const fav = ap ? A.definirFavorito(ap, Number.POSITIVE_INFINITY) : null;
+        await sql`update futbol.partidos set cuota_pre_consultada = true, favorito = ${fav},
+                    cuota_pre_local = ${ap ? ap.local.toFixed(2) : null},
+                    cuota_pre_empate = ${ap && Number.isFinite(ap.empate) ? ap.empate.toFixed(2) : null},
+                    cuota_pre_visitante = ${ap ? ap.visitante.toFixed(2) : null}
+                  where fixture_id = ${f.fixture.id}`;
+        await sql`update futbol.fs_partidos set cuotas = ${sql.json(c as any)} where fs_id = ${p.id}`;
+        log(`favorito ${f.fixture.id} (fs, ${c.casas.length} casas): ${fav ?? "sin cuotas"}`);
+      }
+      await cargarInfo(idsVivosFS);
+
+      // 6. Candidatos y detalle: estadísticas de Flashscore (gratis); cuota en vivo con API-Football
+      const filtradosFS = enVivo.filter(esCandidato);
+      for (const f of filtradosFS) if (tarde(f)) resultadoDetalle.set(f.fixture.id, "tarde" as any);
+      const candidatosFS = filtradosFS.filter((f) => !tarde(f) && Number(info.get(f.fixture.id)?.sin_stats ?? 0) < 2)
+        .sort((a, b) => (b.fixture.status.elapsed ?? 0) - (a.fixture.status.elapsed ?? 0));
+      candidatosN = candidatosFS.length;
+      await actualizarSeguimiento(candidatosFS.map((f) => f.fixture.id), idsVivosFS);
+      const conStatsFS = new Map<number, any>();
+      for (const f of candidatosFS.slice(0, maxDetalle)) {
+        try {
+          const s = await FS.estadisticas(f.__fs.id);
+          conStatsFS.set(f.fixture.id, { ...f, statistics: s.local.length ? [{ team: { id: 1 }, statistics: s.local }, { team: { id: 2 }, statistics: s.visitante }] : [] });
+        } catch (e) {
+          log(`fs stats ${f.__fs.id}: ${(e as Error).message}`);
+          conStatsFS.set(f.fixture.id, { ...f, statistics: [] });
+        }
+      }
+      await detallarCandidatos(candidatosFS, conStatsFS);
+      return await bitacora("fs", { vivos, candidatos: candidatosN, llamadas: api.llamadas, alertas: alertasNuevas, resueltas, detalle,
+        radar: fotoRadar() });
     }
 
     if (modo === "seguimiento") {
