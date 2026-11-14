@@ -258,16 +258,22 @@ Deno.serve(async (req) => {
   if (cfg.escaneo_activo !== true) return json({ motivo: "escaneo_inactivo" });
 
   const ahora = new Date();
-  const [{ cand: nCandidatos, pend: nPendientes }] = await sql`
+  // Observados (DECISIONES 32): ex candidatos que siguen en vivo. Ya no se evalúan, pero se mira su
+  // marcador al ritmo rápido para saber si hubo un gol más y en qué minuto (Flashscore, sin cuota).
+  const [{ cand: nCandidatos, pend: nPendientes, obs: nObservados }] = await sql`
     select (select count(*)::int from futbol.partidos where seguimiento) as cand,
-           (select count(distinct fixture_id)::int from futbol.alertas where resultado = 'pendiente') as pend`;
+           (select count(distinct fixture_id)::int from futbol.alertas where resultado = 'pendiente') as pend,
+           (select count(*)::int from futbol.partidos p
+             where not p.seguimiento and p.estado in ('1H', 'HT', '2H') and p.kickoff > now() - interval '4 hours'
+               and ${cfg.observar_ex_candidatos !== false}
+               and exists (select 1 from futbol.snapshots s where s.fixture_id = p.fixture_id)) as obs`;
   const horas: number[] = cfg.horas_activas_utc ?? [];
   const enHorario = horas.includes(ahora.getUTCHours());
   // Prueba manual: ignora horario e intervalo (NUNCA el presupuesto). Exige el token guardado en
   // futbol.config para que nadie pueda quemar la cuota llamando la URL pública con ?forzar=1.
   const forzar = url.searchParams.get("forzar") === "1" &&
     typeof cfg.token_forzar === "string" && req.headers.get("x-token") === cfg.token_forzar;
-  if (!forzar && !enHorario && nCandidatos === 0 && nPendientes === 0) return json({ motivo: "fuera_de_horario" });
+  if (!forzar && !enHorario && nCandidatos === 0 && nPendientes === 0 && !(cfg.fuente_datos === "flashscore" && nObservados > 0)) return json({ motivo: "fuera_de_horario" });
 
   let est = await estadoPresupuesto(cfg);
   // Poka-yoke del reinicio diario: si NUESTRA cuenta dice que hay cupo pero el último header de la
@@ -347,9 +353,9 @@ Deno.serve(async (req) => {
   // Modo FS con dos ritmos: sin candidatos basta con mirar la lista cada intervalo_fs_min (5);
   // con candidatos el ciclo corre cada intervalo_fs_seg_min (2) para tener snapshots de
   // estadísticas más seguidos (Flashscore no gasta cuota). La cuota en vivo tiene su propio tope.
-  const intervaloFS = nCandidatos > 0 ? Number(cfg.intervalo_fs_seg_min ?? 2) : Number(cfg.intervalo_fs_min ?? 5);
+  const intervaloFS = nCandidatos + nObservados > 0 ? Number(cfg.intervalo_fs_seg_min ?? 2) : Number(cfg.intervalo_fs_min ?? 5);
   if (modoFS) {
-    if ((enHorario || forzar || nCandidatos > 0 || nPendientes > 0) &&
+    if ((enHorario || forzar || nCandidatos > 0 || nPendientes > 0 || nObservados > 0) &&
         await reservar("ultimo_fs", forzar ? 0.5 : intervaloFS)) modo = "fs";
   } else if ((enHorario || forzar) && radarUtil && await reservar("ultimo_radar", intervaloRadar)) modo = "radar";
   else if ((nCandidatos > 0 || nPendientes > 0) && await reservar("ultimo_seguimiento", intervaloSeg)) modo = "seguimiento";
@@ -470,7 +476,7 @@ Deno.serve(async (req) => {
                   lado_gol = ${r.lado_gol}, cerrada_ts = now() where id = ${a.id}`;
       await sql`update futbol.partidos set goles_local_90 = ${r.gl90}, goles_visitante_90 = ${r.gv90},
                   estado = ${f.fixture.status.short}, goles_local = ${f.goals.home}, goles_visitante = ${f.goals.away},
-                  seguimiento = false, actualizado = now() where fixture_id = ${a.fixture_id}`;
+                  seguimiento = false, cierre_fuente = 'api', cerrado_ts = now(), actualizado = now() where fixture_id = ${a.fixture_id}`;
       resueltas++;
       log(`resuelta alerta ${a.id}: ${r.resultado}`);
       await notificarTodos({
@@ -628,6 +634,20 @@ Deno.serve(async (req) => {
       evaluaciones.set(id, { ...ev.condiciones, d: Number(dominancia.toFixed(2)), mo: momentum === null ? null : Number(momentum.toFixed(2)), c: cuotaOver.cuota });
       log(`snap ${id} ${minuto}' D=${dominancia.toFixed(2)} M=${momentum?.toFixed(2) ?? "-"} cuota=${cuotaOver.cuota ?? "-"}`);
 
+      // Aviso de candidato nuevo (DECISIONES 32): el primer snapshot con estadísticas = entra como
+      // candidato (la misma definición de v_candidatos). Push "suave" (una vibración corta, distinta
+      // de la doble de la alerta) para poder mirar el partido. Se apaga con push_candidatos = false.
+      if (!info.get(id)?.con_snap && cfg.push_candidatos !== false && !ev.disparar) {
+        if (info.get(id)) info.get(id).con_snap = true;
+        const favNombre = fav === "home" ? f.teams.home.name : f.teams.away.name;
+        const enviados = await notificarTodos({
+          titulo: `👀 Candidato: ${favNombre} pierde ${gl}-${gv} (${minuto}')`,
+          cuerpo: `${f.teams.home.name} vs ${f.teams.away.name} · ${f.league.name} · D ${dominancia.toFixed(2)} · aún sin alerta`,
+          url: "./#candidatos", tag: `cand-${id}`, suave: true,
+        });
+        log(`aviso candidato ${id} push=${enviados}`);
+      }
+
       if (ev.disparar) {
         const nueva = await sql`
           insert into futbol.alertas (fixture_id, snapshot_id, minuto, marcador, goles_al_alertar, linea_over, cuota,
@@ -731,6 +751,37 @@ Deno.serve(async (req) => {
         .map((r: any) => r.fixture_id);
       const aResolver = [...new Set([...pend.filter((id: number) => terminados.has(id)), ...viejas])];
       if (aResolver.length) await resolverPendientes(await fixturesPorId(aResolver.slice(0, 3)), false);
+
+      // 4b. Cierre gratis de los partidos terminados (DECISIONES 32). Antes solo se cerraban los que
+      // tenían alerta (con API-Football); los demás quedaban congelados en "2H 90'" y no se sabía
+      // cómo terminaron los candidatos. Flashscore da el marcador final en la misma lista del día.
+      // El trigger partidos_cambio_marcador anota el último gol si cayó entre el último ciclo y el final.
+      const finFS = new Map<number, FS.PartidoFS>();
+      for (const p of vivosFS) if (p.estado === 3 && conocidos.get(p.id)?.fixture_id) finFS.set(conocidos.get(p.id).fixture_id, p);
+      // Candidatos que empezaron ayer (UTC) y siguen abiertos: su partido vive en la lista de ayer
+      const abiertosAyer = await sql`
+        select p.fixture_id, f.fs_id from futbol.partidos p join futbol.fs_partidos f using (fixture_id)
+        where coalesce(p.estado, '') not in ('FT', 'AET', 'PEN') and p.kickoff < ${hoy}::date
+          and p.kickoff > now() - interval '36 hours'
+          and exists (select 1 from futbol.snapshots s where s.fixture_id = p.fixture_id)`;
+      if (abiertosAyer.length) {
+        try {
+          const ayer = new Map((await FS.listaDia(-1)).map((p) => [p.id, p]));
+          for (const r of abiertosAyer) { const p = ayer.get(r.fs_id); if (p?.estado === 3) finFS.set(r.fixture_id, p); }
+        } catch (e) { log(`fs lista de ayer: ${(e as Error).message}`); }
+      }
+      if (finFS.size) {
+        const abiertos = await sql`select fixture_id from futbol.partidos
+          where fixture_id = any(${[...finFS.keys()]}::int[]) and coalesce(estado, '') not in ('FT', 'AET', 'PEN')`;
+        for (const { fixture_id } of abiertos) {
+          const p = finFS.get(fixture_id)!;
+          await sql`update futbol.partidos set estado = 'FT', minuto = greatest(coalesce(minuto, 0), 90),
+                      goles_local = ${p.gl}, goles_visitante = ${p.gv}, seguimiento = false,
+                      cierre_fuente = coalesce(cierre_fuente, 'flashscore'), cerrado_ts = now(), actualizado = now()
+                    where fixture_id = ${fixture_id}`;
+        }
+        if (abiertos.length) log(`cerrados con Flashscore: ${abiertos.length}`);
+      }
 
       // 5. Favorito con la cuota de APERTURA de las casas colombianas (gratis, una vez por partido)
       await cargarInfo(idsVivosFS);

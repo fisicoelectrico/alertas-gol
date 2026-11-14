@@ -15,6 +15,7 @@
 //   GET  /alertas        pendientes y resueltas
 //   GET  /rendimiento    acierto vs implícita, ROI (v_rendimiento) + historial por liga (v_ligas_historial)
 //   GET  /ligas          ligas vistas y su rendimiento
+//   GET  /candidatos?dias=14  candidatos (con y sin alerta), su desenlace y la serie de snapshots
 //   GET  /config         parámetros, versiones de regla y consumo de API
 //   GET  /vapid          llave pública para suscribirse a push
 //   POST /suscribir      { endpoint, keys:{p256dh, auth} }
@@ -167,6 +168,36 @@ async function rendimiento() {
   return { filas, conteo, datos, historial };
 }
 
+// Pestaña Candidatos (DECISIONES 32): partidos que pasaron el filtro, con su desenlace (¿hubo un gol
+// más después de entrar?, ¿en qué minuto?, ¿de quién?) y la serie de cada snapshot. Sirve para ver
+// qué se le escapa a la regla (falsos negativos) y calibrar la v5. No gasta cuota: solo lee la base.
+async function candidatos(dias: number) {
+  const filas = await sql`select * from futbol.v_candidatos
+                          where ts_entrada > now() - make_interval(days => ${dias}) order by ts_entrada desc limit 300`;
+  const ids = filas.map((f: any) => f.fixture_id);
+  // Serie compacta: IP, dominancia, momentum, cuota, córners y ataques peligrosos de cada snapshot.
+  // Los ataques peligrosos solo existen si Flashscore los publica para esa liga (raw.fixture.__extra).
+  const serie = ids.length ? await sql`
+    select fixture_id, minuto as m, goles_local as gl, goles_visitante as gv, ip_local as ipl, ip_visitante as ipv,
+           dominancia as d, momentum as mo, cuota_over as c,
+           (stats_local->>'corners')::int as col, (stats_visitante->>'corners')::int as cov,
+           nullif(regexp_replace(coalesce(raw->'fixture'->'__extra'->'Dangerous attacks'->>0, ''), '[^0-9.]', '', 'g'), '')::numeric as apl,
+           nullif(regexp_replace(coalesce(raw->'fixture'->'__extra'->'Dangerous attacks'->>1, ''), '[^0-9.]', '', 'g'), '')::numeric as apv,
+           evaluacion->'dominancia' as okd, evaluacion->'momentum' as okm, evaluacion->'cuota' as okc
+    from futbol.snapshots where stats_local is not null and fixture_id = any(${ids}::int[]) order by fixture_id, ts` : [];
+  const porId = new Map<number, any[]>();
+  for (const s of serie) { const id = s.fixture_id; delete s.fixture_id; (porId.get(id) ?? porId.set(id, []).get(id)!).push(s); }
+  const goles = ids.length ? await sql`select fixture_id, minuto, minuto_antes, gl_antes, gv_antes, gl, gv, fuente
+                                       from futbol.cambios_marcador where fixture_id = any(${ids}::int[]) order by ts` : [];
+  const golesPor = new Map<number, any[]>();
+  for (const g of goles) (golesPor.get(g.fixture_id) ?? golesPor.set(g.fixture_id, []).get(g.fixture_id)!).push(g);
+  const cfg = await leerConfig();
+  return {
+    dias, dominancia_min: cfg.dominancia_min, cuota_objetivo: cfg.cuota_objetivo, minuto_max: cfg.minuto_max,
+    candidatos: filas.map((f: any) => ({ ...f, serie: porId.get(f.fixture_id) ?? [], goles: golesPor.get(f.fixture_id) ?? [] })),
+  };
+}
+
 async function ligas() {
   return await sql`
     select l.id, l.nombre, l.pais, l.habilitada, l.notas,
@@ -235,6 +266,7 @@ Deno.serve(async (req) => {
       if (ruta === "/widget") return json(await widget());
       if (ruta === "/rendimiento") return json(await rendimiento());
       if (ruta === "/ligas") return json(await ligas());
+      if (ruta === "/candidatos") return json(await candidatos(Math.min(Math.max(Number(url.searchParams.get("dias")) || 14, 1), 90)));
       if (ruta === "/config") return json(await config());
       if (ruta === "/vapid") return json({ publicKey: Deno.env.get("VAPID_PUBLIC")?.trim() ?? null });
       if (ruta === "/snapshots") {

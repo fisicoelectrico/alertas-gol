@@ -253,6 +253,82 @@ function historialPaises(h) {
 let filtroRadar = localStorage.getItem("filtroRadar") || "todos";
 
 // ---------- pantallas ----------
+
+// ---------- candidatos: los que pasaron el filtro (con y sin alerta) ----------
+// Mini-gráfica de una métrica a lo largo de los snapshots de un candidato. `a` es la serie del
+// favorito (línea continua, verde) y `b`, opcional, la del rival (línea punteada, azul): así la
+// identidad no depende solo del color. `umbral` dibuja la línea de la regla; `gol` sombrea el
+// tramo de minutos en que cayó el gol posterior (entre dos ciclos del escáner).
+function miniSerie({ titulo, pts, a, b, umbral, gol, x0, x1, dec = 1 }) {
+  const va = pts.map((p) => ({ m: p.m, y: a(p) })).filter((p) => p.y !== null && Number.isFinite(p.y));
+  const vb = b ? pts.map((p) => ({ m: p.m, y: b(p) })).filter((p) => p.y !== null && Number.isFinite(p.y)) : [];
+  if (!va.length && !vb.length) return `<div class="mini"><div class="mini-cab"><span>${titulo}</span><span class="tenue">sin dato en esta liga</span></div></div>`;
+  const W = 300, H = 52, P = 5;
+  const ys = [...va, ...vb].map((p) => p.y).concat(umbral != null ? [umbral] : []);
+  const yMax = Math.max(...ys) * 1.1 || 1, yMin = Math.min(0, ...ys);
+  const X = (m) => P + (m - x0) / Math.max(x1 - x0, 1) * (W - 2 * P);
+  const Y = (y) => H - P - (y - yMin) / Math.max(yMax - yMin, 1e-9) * (H - 2 * P);
+  const camino = (v) => v.map((p, i) => `${i ? "L" : "M"}${X(p.m).toFixed(1)},${Y(p.y).toFixed(1)}`).join(" ");
+  const puntos = (v, cls, quien) => v.map((p) => `<circle class="${cls}" cx="${X(p.m).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="2.5"><title>${p.m}' · ${quien} ${n(p.y, dec)}</title></circle>`).join("");
+  const ua = va[va.length - 1], ub = vb[vb.length - 1];
+  return `<div class="mini">
+    <div class="mini-cab"><span>${titulo}</span><span class="num">${ua ? `fav ${n(ua.y, dec)}` : ""}${ub ? ` · riv ${n(ub.y, dec)}` : ""}${umbral != null ? ` · umbral ${n(umbral, 2)}` : ""}</span></div>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(titulo)} por minuto">
+      ${gol ? `<rect class="mini-gol" x="${X(gol[0]).toFixed(1)}" y="0" width="${Math.max(X(gol[1]) - X(gol[0]), 3).toFixed(1)}" height="${H}"/>` : ""}
+      ${umbral != null ? `<line class="mini-umbral" x1="0" x2="${W}" y1="${Y(umbral).toFixed(1)}" y2="${Y(umbral).toFixed(1)}"/>` : ""}
+      ${vb.length > 1 ? `<path class="mini-b" d="${camino(vb)}"/>` : ""}
+      ${va.length > 1 ? `<path class="mini-a" d="${camino(va)}"/>` : ""}
+      ${puntos(vb, "pb", "riv")}${puntos(va, "pa", "fav")}
+    </svg></div>`;
+}
+const RESULTADO_CAND = { gol: ["pos", "Hubo gol"], sin_gol: ["neg", "Sin gol"], pendiente: ["tenue", "En juego"], anulado: ["tenue", "Anulado"] };
+const FALTO = { dominancia: "dominancia", momentum: "momentum", cuota: "cuota" };
+function faltoTexto(ev) {
+  if (!ev) return "";
+  const f = Object.keys(FALTO).filter((k) => ev[k] !== true).map((k) => ev[k] === null || ev[k] === undefined ? `${FALTO[k]} sin dato` : FALTO[k]);
+  return f.length ? `Al salir le faltaba: ${f.join(", ")}` : "Cumplía todo";
+}
+function tarjetaCandidato(c, cfg) {
+  const fav = c.favorito;
+  const lado = (p, k) => (fav === "home" ? p[k + "l"] : p[k + "v"]);
+  const otro = (p, k) => (fav === "home" ? p[k + "v"] : p[k + "l"]);
+  const num = (v) => (v === null || v === undefined ? null : Number(v));
+  const pts = c.serie || [];
+  const x0 = Math.min(c.min_entrada ?? 46, ...pts.map((p) => p.m));
+  const x1 = Math.max(90, c.min_gol ?? 0, ...pts.map((p) => p.m));
+  const gol = c.min_gol != null ? [c.min_gol_desde ?? c.min_gol, c.min_gol] : null;
+  const [cls, txt] = RESULTADO_CAND[c.resultado] || ["tenue", c.resultado];
+  const tramo = c.min_gol != null ? (c.min_gol_desde != null && c.min_gol_desde !== c.min_gol ? `${c.min_gol_desde}'–${c.min_gol}'` : `${c.min_gol}'`) : "";
+  const desenlace = c.resultado === "gol"
+    ? `Gol ${tramo ? `entre ${tramo} ` : "(minuto sin registrar) "}${c.gol_de ? `del ${c.gol_de}` : ""}`
+    : c.resultado === "sin_gol" ? "No hubo más goles" : c.resultado === "pendiente" ? "Partido sin cerrar todavía" : "";
+  const aprox = c.cierre_fuente === "radar" ? ` <span class="tenue" title="Final tomado del último radar visto (antes de que existiera el cierre con Flashscore)">≈</span>` : "";
+  const FAV = '<span class="fav">FAV</span>';
+  return `<details class="tarjeta cand ${c.alerta_id ? "alerta" : ""}">
+    <summary>
+      <div class="liga"><span>${esc(c.liga || "")}${c.pais ? " · " + esc(c.pais) : ""} · ${hora(c.kickoff)}</span><span class="estado-cand ${cls}">${txt}</span></div>
+      <div class="fila" style="margin-top:6px"><b class="requipos">${esc(c.local)}${fav === "home" ? FAV : ""} vs ${fav === "away" ? FAV : ""}${esc(c.visitante)}</b><span class="num">${c.goles_local}–${c.goles_visitante}${aprox}</span></div>
+      <p class="detalle">Entró al ${c.min_entrada}' con ${c.gl_entrada}–${c.gv_entrada} (Over ${n(c.linea_entrada, 1)}) · ${c.snapshots} snapshots · fav @ ${n(c.cuota_fav)} · ${esc(c.regla_version)}</p>
+      <p class="detalle"><b>${esc(desenlace)}</b>${c.alerta_id ? ` · alerta al ${c.alerta_minuto}' @ ${n(c.alerta_cuota)} (${esc(c.alerta_resultado)})` : ` · ${esc(faltoTexto(c.eval_ultima))}`}</p>
+    </summary>
+    <div class="minis">
+      ${miniSerie({ titulo: "Índice de presión", pts, a: (p) => num(lado(p, "ip")), b: (p) => num(otro(p, "ip")), gol, x0, x1 })}
+      ${miniSerie({ titulo: "Dominancia (fav ÷ rival)", pts, a: (p) => num(p.d), umbral: Number(cfg.dominancia_min) || 1.3, gol, x0, x1, dec: 2 })}
+      ${miniSerie({ titulo: "Momentum", pts, a: (p) => num(p.mo), umbral: Number(cfg.dominancia_min) || 1.3, gol, x0, x1, dec: 2 })}
+      ${miniSerie({ titulo: "Ataques peligrosos", pts, a: (p) => num(lado(p, "ap")), b: (p) => num(otro(p, "ap")), gol, x0, x1, dec: 0 })}
+      ${miniSerie({ titulo: "Córners", pts, a: (p) => num(lado(p, "co")), b: (p) => num(otro(p, "co")), gol, x0, x1, dec: 0 })}
+      <div class="mini-ley"><span><i class="la"></i>favorito</span><span><i class="lb"></i>rival</span><span><i class="lu"></i>umbral</span>${gol ? `<span><i class="lg"></i>gol posterior</span>` : ""}<span>${x0}'–${x1}'</span></div>
+    </div>
+    <details class="tabla-cand"><summary>Ver tabla de snapshots</summary>
+      <div class="tabla-wrap"><table><thead><tr><th>Min</th><th>Marc.</th><th>IP fav/riv</th><th>D</th><th>M</th><th>AP</th><th>Có</th><th>Over</th></tr></thead><tbody>
+      ${pts.map((p) => `<tr><td>${p.m}'</td><td>${p.gl}–${p.gv}</td><td>${n(lado(p, "ip"), 1)} / ${n(otro(p, "ip"), 1)}</td><td class="${p.okd === true ? "pos" : ""}">${n(p.d)}</td><td class="${p.okm === true ? "pos" : ""}">${n(p.mo)}</td><td>${lado(p, "ap") ?? "–"}/${otro(p, "ap") ?? "–"}</td><td>${lado(p, "co") ?? "–"}/${otro(p, "co") ?? "–"}</td><td>${n(p.c)}</td></tr>`).join("")}
+      </tbody></table></div>
+      ${(c.goles || []).length ? `<p class="nota">Cambios de marcador: ${c.goles.map((g) => `${g.gl_antes}–${g.gv_antes} → ${g.gl}–${g.gv} (${g.minuto_antes ?? "?"}'–${g.minuto ?? "?"}')`).join(" · ")}</p>` : ""}
+    </details>
+  </details>`;
+}
+let filtroCand = (() => { try { return localStorage.getItem("filtroCand") || "sin_alerta"; } catch (_) { return "sin_alerta"; } })();
+
 const pantallas = {
   async vivo() {
     const r = await get("/resumen");
@@ -403,6 +479,48 @@ const pantallas = {
       ${tabla("Por liga", r.filas.filter((f) => f.liga !== "(todas)"), "Liga")}
       <p class="nota">Pendientes: ${r.conteo.pendientes} · anuladas: ${r.conteo.anuladas} · snapshots guardados: ${r.datos.snapshots}.</p>
       ${historialPaises(r.historial)}`;
+  },
+
+
+  async candidatos() {
+    const r = await get("/candidatos?dias=30");
+    const todos = r.candidatos || [];
+    if (!todos.length) return `<div class="tarjeta vacio"><strong>Aún no hay candidatos</strong>Aparecen aquí los partidos que pasan el filtro (favorito perdiendo en el 2.º tiempo) apenas el escáner les toma el primer snapshot.</div>`;
+    setTimeout(() => document.querySelectorAll(".filtro[data-c]").forEach((b) => b.addEventListener("click", () => {
+      filtroCand = b.dataset.c;
+      try { localStorage.setItem("filtroCand", filtroCand); } catch (_) {}
+      navegar(true);
+    })));
+    const sinAl = todos.filter((c) => !c.alerta_id), conAl = todos.filter((c) => c.alerta_id);
+    const resueltos = (xs) => xs.filter((c) => c.resultado === "gol" || c.resultado === "sin_gol");
+    const tasa = (xs) => { const rs = resueltos(xs); const g = rs.filter((c) => c.resultado === "gol").length; return { n: rs.length, g, pct: rs.length ? g / rs.length * 100 : null }; };
+    const tS = tasa(sinAl), tC = tasa(conAl);
+    const golesS = resueltos(sinAl).filter((c) => c.resultado === "gol");
+    const delFav = golesS.filter((c) => c.gol_de === "favorito").length;
+    const conMin = golesS.filter((c) => c.min_gol != null);
+    const minMedio = conMin.length ? conMin.reduce((a, c) => a + c.min_gol, 0) / conMin.length : null;
+    // Qué condición faltó al salir (solo los sin alerta)
+    const faltas = { dominancia: 0, momentum: 0, cuota: 0 };
+    sinAl.forEach((c) => Object.keys(faltas).forEach((k) => { if (c.eval_ultima && c.eval_ultima[k] !== true) faltas[k]++; }));
+    const implicita = 100 / (Number(r.cuota_objetivo) || 1.4);
+    const filtros = [["sin_alerta", "Sin alerta", sinAl.length], ["con_alerta", "Con alerta", conAl.length], ["todos", "Todos", todos.length]];
+    const vis = filtroCand === "con_alerta" ? conAl : filtroCand === "todos" ? todos : sinAl;
+    return `<div class="titulo-seccion"><h2>Candidatos</h2><small>últimos ${r.dias} días</small></div>
+      <article class="tarjeta">
+        <p>De los candidatos <b>sin alerta</b> ya terminados, ¿cuántos tuvieron un gol más después de entrar?</p>
+        <div class="duelo">
+          <div><span>Sin alerta: hubo gol</span><b>${tS.pct === null ? "–" : n(tS.pct, 0) + "%"}</b><small class="tenue">${tS.g} de ${tS.n}</small></div>
+          <div><span>Con alerta: hubo gol</span><b>${tC.pct === null ? "–" : n(tC.pct, 0) + "%"}</b><small class="tenue">${tC.g} de ${tC.n}</small></div>
+        </div>
+        <p class="nota">Goles de los sin alerta: ${delFav} del favorito, ${golesS.length - delFav} del rival${minMedio ? ` · minuto medio ${n(minMedio, 0)}'` : ""}.
+          Al salir les faltaba dominancia a ${faltas.dominancia}, momentum a ${faltas.momentum} y cuota a ${faltas.cuota} de ${sinAl.length}.</p>
+        <p class="nota">Cómo leerlo: si los candidatos sin alerta tienen tanto gol como los alertados, los umbrales no están separando nada. La referencia de dinero es la implícita de la cuota (${n(implicita, 1)}% a ${n(r.cuota_objetivo)}), pero de los sin alerta casi nunca hay cuota en vivo (solo se pide cuando la regla puede disparar), así que este % mide el patrón, no la rentabilidad. ${tS.n < 30 ? "<b>Con menos de 30 terminados todavía no se puede concluir nada.</b>" : ""}</p>
+      </article>
+      <div class="filtros" role="group" aria-label="Filtrar candidatos">
+        ${filtros.map(([k, t, c]) => `<button type="button" class="filtro ${filtroCand === k ? "on" : ""}" data-c="${k}" aria-pressed="${filtroCand === k}">${t} <span class="num">${c}</span></button>`).join("")}
+      </div>
+      ${vis.map((c) => tarjetaCandidato(c, r)).join("") || `<div class="tarjeta vacio">Ningún candidato en este grupo.</div>`}
+      <p class="nota">Toca un partido para ver su evolución. El gol posterior se detecta comparando el marcador ciclo a ciclo (cada 2 min con Flashscore), por eso se muestra como un tramo de minutos. El final sale de Flashscore sin gastar cuota; ≈ marca finales tomados del último radar visto.</p>`;
   },
 
   async ligas() {
