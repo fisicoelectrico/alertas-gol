@@ -41,7 +41,7 @@ public class GolesWidget extends AppWidgetProvider {
 
     @Override
     public void onUpdate(Context ctx, AppWidgetManager mgr, int[] ids) {
-        programar(ctx);
+        try { programar(ctx); } catch (Throwable t) { Diagnostico.guardar(ctx, "programar", t); }
         refrescarEnSegundoPlano(ctx);
     }
 
@@ -72,7 +72,9 @@ public class GolesWidget extends AppWidgetProvider {
         final PendingResult pr = goAsync();
         final Context app = ctx.getApplicationContext();
         new Thread(() -> {
-            try { refrescar(app); } finally { pr.finish(); }
+            try { refrescar(app); }
+            catch (Throwable t) { Diagnostico.guardar(app, "refrescar", t); }
+            finally { pr.finish(); }
         }).start();
     }
 
@@ -82,12 +84,31 @@ public class GolesWidget extends AppWidgetProvider {
         int[] ids = mgr.getAppWidgetIds(new ComponentName(ctx, GolesWidget.class));
         if (ids.length == 0) return;
         RemoteViews rv;
+        String json;
         try {
-            rv = pintar(ctx, new JSONObject(descargar()));
-        } catch (Exception e) {
+            json = descargar();
+        } catch (Throwable t) {
             rv = base(ctx);
             rv.setTextViewText(R.id.hora, "sin conexión · toca ⟳");
+            mgr.updateAppWidget(ids, rv);
+            return;
         }
+        // Tres intentos, de más rico a más simple. Poka-yoke: un error al pintar nunca tumba la app;
+        // queda escrito en la caja negra (se ve al abrir la app) y el widget baja al modo siguiente.
+        try {
+            mgr.updateAppWidget(ids, pintar(ctx, new JSONObject(json), true));   // lista deslizable
+            return;
+        } catch (Throwable t) {
+            Diagnostico.guardar(ctx, "lista deslizable", t);
+        }
+        try {
+            mgr.updateAppWidget(ids, pintar(ctx, new JSONObject(json), false));  // lista como texto
+            return;
+        } catch (Throwable t) {
+            Diagnostico.guardar(ctx, "lista de texto", t);
+        }
+        rv = base(ctx);
+        rv.setTextViewText(R.id.hora, "error al pintar · abre la app para ver el detalle");
         mgr.updateAppWidget(ids, rv);
     }
 
@@ -111,13 +132,13 @@ public class GolesWidget extends AppWidgetProvider {
         RemoteViews rv = new RemoteViews(ctx.getPackageName(), R.layout.widget);
         int mut = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
         rv.setOnClickPendingIntent(R.id.cabecera, PendingIntent.getActivity(ctx, 1,
-                new Intent(Intent.ACTION_VIEW, Uri.parse(PWA + "#vivo")), mut));
+                new Intent(ctx, Abrir.class), mut));
         Intent act = new Intent(ctx, GolesWidget.class).setAction(ACTUALIZAR);
         rv.setOnClickPendingIntent(R.id.actualizar, PendingIntent.getBroadcast(ctx, 2, act, mut));
         return rv;
     }
 
-    static RemoteViews pintar(Context ctx, JSONObject j) throws Exception {
+    static RemoteViews pintar(Context ctx, JSONObject j, boolean usarLista) throws Exception {
         RemoteViews rv = base(ctx);
         int vivos = j.optInt("vivos"), cand = j.optInt("candidatos");
         rv.setTextViewText(R.id.vivos, String.valueOf(vivos));
@@ -129,22 +150,25 @@ public class GolesWidget extends AppWidgetProvider {
         int n = ps == null ? 0 : ps.length();
         rv.setViewVisibility(R.id.vacio, n == 0 ? View.VISIBLE : View.GONE);
 
-        if (Build.VERSION.SDK_INT >= 31) {
+        if (usarLista && Build.VERSION.SDK_INT >= 31) {
             // Android 12+: la lista se entrega completa y el launcher la hace deslizable.
             RemoteViews.RemoteCollectionItems.Builder b = new RemoteViews.RemoteCollectionItems.Builder();
             for (int i = 0; i < n; i++) b.addItem(i, fila(ctx, ps.getJSONObject(i)));
             b.setViewTypeCount(1);
             rv.setRemoteAdapter(R.id.lista, b.build());
+            // La plantilla de toques de una lista tiene que ser MUTABLE (Android le agrega datos por fila),
+            // y desde Android 14 un PendingIntent mutable con intent implícito (ACTION_VIEW a una URL)
+            // está prohibido. Por eso apunta, explícito, a la actividad Abrir, que abre la PWA.
             rv.setPendingIntentTemplate(R.id.lista, PendingIntent.getActivity(ctx, 3,
-                    new Intent(Intent.ACTION_VIEW, Uri.parse(PWA + "#radar")),
+                    new Intent(ctx, Abrir.class),
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE));
             rv.setViewVisibility(R.id.lista, View.VISIBLE);
             rv.setViewVisibility(R.id.lista_simple, View.GONE);
         } else {
-            // Android 8-11: sin listas de este tipo; se muestran los primeros 6 como texto.
+            // Android 8-11 (o si la lista falló): se muestran los primeros 12 como texto.
             StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < Math.min(n, 6); i++) sb.append(texto(ps.getJSONObject(i))).append('\n');
-            if (n > 6) sb.append("+").append(n - 6).append(" más");
+            for (int i = 0; i < Math.min(n, 12); i++) sb.append(texto(ps.getJSONObject(i))).append('\n');
+            if (n > 12) sb.append("+").append(n - 12).append(" más");
             rv.setTextViewText(R.id.lista_simple, sb.toString().trim());
             rv.setViewVisibility(R.id.lista, View.GONE);
             rv.setViewVisibility(R.id.lista_simple, View.VISIBLE);

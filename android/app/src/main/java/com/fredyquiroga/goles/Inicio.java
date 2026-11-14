@@ -33,8 +33,26 @@ public class Inicio extends Activity {
         abrir.setText("Abrir Alertas de Gol");
         abrir.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(GolesWidget.PWA))));
         l.addView(abrir);
-        setContentView(l);
+        // Caja negra: si algo falló, se muestra aquí para poder enviar una captura.
+        String err = Diagnostico.leer(this);
+        if (err != null) {
+            TextView e = new TextView(this);
+            e.setTextColor(0xFFFF6B5E);
+            e.setTextSize(11);
+            e.setTextIsSelectable(true);
+            e.setPadding(0, 32, 0, 0);
+            e.setText("Último error registrado (mándale captura a Claude):\n" + err);
+            l.addView(e);
+            Button borrar = new Button(this);
+            borrar.setText("Borrar error");
+            borrar.setOnClickListener(v -> { Diagnostico.borrar(this); recreate(); });
+            l.addView(borrar);
+        }
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.setBackgroundColor(0xFF0D1512);
+        sv.addView(l);
+        setContentView(sv);
 
-        GolesWidget.programar(this);
+        try { GolesWidget.programar(this); } catch (Throwable t) { Diagnostico.guardar(this, "programar", t); }
     }
 }
