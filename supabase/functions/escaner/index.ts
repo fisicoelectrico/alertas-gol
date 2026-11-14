@@ -344,9 +344,13 @@ Deno.serve(async (req) => {
   let modo: "radar" | "seguimiento" | "fs" | null = null;
   // Sin partidos útiles en zona no hay nada que el radar pueda encontrar: no se gasta.
   const radarUtil = forzar || enZona === null || enZona > 0;
+  // Modo FS con dos ritmos: sin candidatos basta con mirar la lista cada intervalo_fs_min (5);
+  // con candidatos el ciclo corre cada intervalo_fs_seg_min (2) para tener snapshots de
+  // estadísticas más seguidos (Flashscore no gasta cuota). La cuota en vivo tiene su propio tope.
+  const intervaloFS = nCandidatos > 0 ? Number(cfg.intervalo_fs_seg_min ?? 2) : Number(cfg.intervalo_fs_min ?? 5);
   if (modoFS) {
     if ((enHorario || forzar || nCandidatos > 0 || nPendientes > 0) &&
-        await reservar("ultimo_fs", forzar ? 0.5 : Number(cfg.intervalo_fs_min ?? 5))) modo = "fs";
+        await reservar("ultimo_fs", forzar ? 0.5 : intervaloFS)) modo = "fs";
   } else if ((enHorario || forzar) && radarUtil && await reservar("ultimo_radar", intervaloRadar)) modo = "radar";
   else if ((nCandidatos > 0 || nPendientes > 0) && await reservar("ultimo_seguimiento", intervaloSeg)) modo = "seguimiento";
   if (!modo) {
@@ -357,7 +361,7 @@ Deno.serve(async (req) => {
   if (modo === "radar") await marcar("ultimo_seguimiento");
 
   const detalle: Record<string, unknown> = {
-    modo, intervalo_min: modo === "radar" ? intervaloRadar : modo === "fs" ? Number(cfg.intervalo_fs_min ?? 5) : intervaloSeg,
+    modo, intervalo_min: modo === "radar" ? intervaloRadar : modo === "fs" ? intervaloFS : intervaloSeg,
     regla: regla.version, eventos: [...pre] as string[],
     en_zona: enZona,
   };
@@ -592,7 +596,12 @@ Deno.serve(async (req) => {
       let cuotaOver: A.CuotaOver = { linea, cuota: null, suspendida: false, mercado: null, lineas: {} };
       let rOdds: any = null;
       const vale = dominancia >= regla.dominancia_min && momentum !== null && momentum >= regla.dominancia_min;
-      if ((vale || cfg.cuotas_siempre === true) && api.quedan() > 0) {
+      // Tope de la cuota en vivo: como mucho una consulta cada intervalo_cuota_min (3) por partido,
+      // aunque los snapshots de estadísticas sean más seguidos. Sin cuota fresca ese ciclo no alerta.
+      const [cuotaReciente] = await sql`select 1 from futbol.snapshots where fixture_id = ${id} and cuota_over is not null
+        and ts > now() - make_interval(secs => ${Number(cfg.intervalo_cuota_min ?? 3) * 60 - 30}::float8) limit 1`;
+      if (cuotaReciente) log(`cuota ${id}: tope, la última tiene menos de ${cfg.intervalo_cuota_min ?? 3} min`);
+      if ((vale || cfg.cuotas_siempre === true) && !cuotaReciente && api.quedan() > 0) {
         rOdds = await api.get("/odds/live", { fixture: id });
         cuotaOver = A.parsearCuotaOver(rOdds, linea);
         if (!p.cuota_vivo_probada) {
