@@ -44,6 +44,7 @@ export interface Regla {
   patrones_copa: string[];   // nombres de competición que se descartan siempre (v3)
   goles_fav_max: number;     // v6: goles que puede llevar el favorito (1 → entra 1-3, no entra 2-3); 99 = sin límite
   excluir_reempate: boolean; // v6: fuera si el favorito empató viniendo de atrás y le volvieron a marcar
+  excluir_roja_fav?: boolean; // v7: fuera si el favorito tiene una tarjeta roja (juega con uno menos)
 }
 
 // Nombres que usa API-Football en /fixtures/statistics → nuestras claves
@@ -195,6 +196,7 @@ export interface Contexto {
   goles_visitante: number;
   favorito: "home" | "away" | null;
   reempate?: boolean;        // ver reempateRoto()
+  rojas_fav?: number;        // tarjetas rojas del favorito (solo se conoce con estadísticas en vivo)
 }
 
 /**
@@ -232,6 +234,8 @@ export function filtroCandidato(c: Contexto, r: Regla): { ok: boolean; motivo?: 
   const golesFav = c.favorito === "home" ? c.goles_local : c.goles_visitante;
   if (golesFav > r.goles_fav_max) return { ok: false, motivo: "fav_con_goles", desventaja };
   if (r.excluir_reempate && c.reempate) return { ok: false, motivo: "reempate", desventaja };
+  // Fredy (14 nov): un favorito con uno menos pierde la ventaja que justifica la entrada, aunque cumpla todo
+  if (r.excluir_roja_fav && (c.rojas_fav ?? 0) > 0) return { ok: false, motivo: "roja_fav", desventaja };
   return { ok: true, desventaja };
 }
 
@@ -413,7 +417,7 @@ export function esCopa(nombreLiga: string | null | undefined, patrones: string[]
 export type MotivoRadar =
   | "copa" | "aislada" | "sin_cuota_pre" | "aun_no_2T" | "otro_estado" | "fuera_ventana" | "empatado"
   | "favorito_no_pierde" | "sin_favorito_claro" | "sin_consultar" | "ya_alertado"
-  | "sin_cupo" | "sin_estadisticas" | "sin_cuota_vivo" | "evaluado" | "sin_cobertura" | "tarde" | "reempate" | "fav_con_goles";
+  | "sin_cupo" | "sin_estadisticas" | "sin_cuota_vivo" | "evaluado" | "sin_cobertura" | "tarde" | "reempate" | "fav_con_goles" | "roja_fav";
 
 export function motivoRadar(x: {
   copa?: boolean;                                      // competición excluida por nombre (esCopa)

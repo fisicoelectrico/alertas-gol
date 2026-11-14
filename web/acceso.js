@@ -251,10 +251,30 @@ function metricas(lista) {
   return { cerradas: c.length, salieron: c.filter((a) => a.resultado === "acierto").length, yield: c.length ? 100 * g / c.length : null };
 }
 
+// Partidos en vivo, sin jerga: marcador, minuto y si está "cumpliendo" (favorito que pierde y está en
+// seguimiento). Sale de la última foto del radar (/widget), no gasta consultas de API-Football.
+function listaEnVivo(w, abiertas) {
+  if (!w?.partidos) return "";
+  const conAlerta = new Set(abiertas.map((a) => `${a.local}|${a.visitante}`));
+  const vivos = w.partidos.filter((p) => ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(p.e) && !conAlerta.has(`${p.l}|${p.v}`));
+  if (!vivos.length) return `<div class="titulo-seccion"><h2>En vivo</h2><small>${w.ts ? hace(w.ts) : ""}</small></div>
+    <div class="tarjeta vacio" style="padding:16px">No hay partidos en vivo en este momento.</div>`;
+  const cumplen = vivos.filter((p) => p.c).length;
+  const fila = (p) => `<div class="vfila ${p.c ? "cumple" : ""}">
+      <span class="vmin num">${p.e === "HT" ? "Desc." : p.m != null ? `${p.m}'` : esc(ESTADOS[p.e] || p.e)}</span>
+      <span class="vequipos"><span>${esc(p.l)}${p.fav === "home" ? " <i class=\"vfav\">★</i>" : ""}</span><span>${esc(p.v)}${p.fav === "away" ? " <i class=\"vfav\">★</i>" : ""}</span></span>
+      <b class="vgoles num">${p.gl}<br>${p.gv}</b>
+      ${p.c ? `<span class="vcumple">Cumpliendo</span>` : ""}
+    </div>`;
+  return `<div class="titulo-seccion"><h2>En vivo</h2><small>${vivos.length} partidos${cumplen ? ` · ${cumplen} cumpliendo` : ""} · ${w.ts ? hace(w.ts) : ""}</small></div>
+    <div class="tarjeta lista-vivo">${vivos.map(fila).join("")}</div>
+    <p class="nota explica">★ = favorito. "Cumpliendo" = el favorito va perdiendo y lo estamos midiendo: si además ataca mucho y la cuota sirve, llega la alerta.</p>`;
+}
+
 // ---------- pantallas nuevas ----------
 Object.assign(pantallas, {
   async ahora() {
-    const [lista, push] = await Promise.all([get("/alertas"), estadoPush()]);
+    const [lista, push, w] = await Promise.all([get("/alertas"), estadoPush(), get("/widget").catch(() => null)]);
     const abiertas = lista.filter((a) => a.resultado === "pendiente");
     const hoyStr = new Date().toDateString();
     const m = metricas(lista.filter((a) => new Date(a.ts).toDateString() === hoyStr));
@@ -265,6 +285,7 @@ Object.assign(pantallas, {
       ${avisoPush}
       ${abiertas.length ? abiertas.map(tarjetaAbierta).join("")
         : `<div class="tarjeta vacio"><strong>No hay alertas abiertas ahora</strong>El radar sigue mirando partidos. Te avisamos apenas aparezca una.</div>`}
+      ${listaEnVivo(w, abiertas)}
       <div class="tarjeta hoy"><span>Hoy</span><b>${m.cerradas ? `${m.cerradas} cerrada${m.cerradas === 1 ? "" : "s"} · ${m.salieron} ${m.salieron === 1 ? "salió" : "salieron"}` : "Sin alertas cerradas todavía"}</b></div>
       ${esAdmin() ? `<p class="nota"><a href="#vivo">Ver candidatos y datos técnicos ›</a></p>` : ""}`;
   },

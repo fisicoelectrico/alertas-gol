@@ -61,6 +61,7 @@ function reglaDesde(cfg: Config): A.Regla {
     momentum_gap_min: Number(cfg.momentum_gap_min),
     pesos_ip: cfg.pesos_ip,
     excluir_reempate: cfg.excluir_reempate === true,
+    excluir_roja_fav: cfg.excluir_roja_fav === true,
     goles_fav_max: Number.isFinite(Number(cfg.goles_fav_max)) ? Number(cfg.goles_fav_max) : 99,
     patrones_copa: Array.isArray(cfg.patrones_copa) ? cfg.patrones_copa : ["cup", "copa", "coupe", "taça", "pokal", "coppa", "trophy", "libertadores", "sudamericana", "champions league", "friendly", "amistoso"],
   };
@@ -637,7 +638,8 @@ Deno.serve(async (req) => {
       }
 
       const ev = A.evaluar({
-        ctx: { estado: f.fixture.status.short, minuto, goles_local: gl, goles_visitante: gv, favorito: fav, reempate: !!info.get(id)?.reempate },
+        ctx: { estado: f.fixture.status.short, minuto, goles_local: gl, goles_visitante: gv, favorito: fav, reempate: !!info.get(id)?.reempate,
+               rojas_fav: Number((fav === "home" ? sL : sV).rojas) || 0 },
         regla, dominancia, momentum, cuotaOver,
       });
       const [snap] = await sql`

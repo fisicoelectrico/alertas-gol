@@ -133,3 +133,8 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 - Transición sin cortes: `modo_acceso = abierto` hasta que Fredy abra su enlace de administrador; el botón "Cerrar: solo con enlace" se niega mientras no haya una sesión admin activa (poka-yoke para no quedar por fuera).
 - Las entradas solo se pueden marcar mientras la alerta está abierta y antes del aviso de gol: nadie "entra" sabiendo el resultado.
 - La animación de inicio recrea en SVG + CSS los 9 cuadros que Fredy hizo con otra IA (partículas, hélice, balón, estallido, cintas, nombre). Pesa unos KB, se salta con un toque y respeta "reducir movimiento". En tamaños chicos el brillo y el sombreado se pierden: el ícono usa cintas + balón y la barra de estado una versión plana de un color.
+
+**36. Roja del favorito, partidos en vivo para todos y favorito local/visitante (14 nov).** Pedidos de Fredy al ver la versión 1.6:
+- **Roja del favorito (regla v7):** un favorito con uno menos pierde la ventaja que justifica la entrada, así cumpla dominancia, momentum y cuota. Interruptor `config.excluir_roja_fav` (es regla), nace apagado. Límite: la roja solo se conoce cuando hay estadísticas en vivo del partido; el candidato sigue en seguimiento (para el análisis) pero no alerta.
+- **Ahora:** los amigos ven las alertas abiertas arriba, muy visibles, y debajo los partidos en vivo con un sello "Cumpliendo" para los que el radar está midiendo. Nada de seguimiento, huecos de API, aisladas ni versiones de regla: eso queda para el admin en Control.
+- **Local vs visitante:** con los datos al 14 nov, los favoritos visitantes candidatos tuvieron otro gol 7 de 7 y los locales 13 de 18. Son muestras chicas; la tabla queda en Rendimiento técnico para mirarla con más partidos.

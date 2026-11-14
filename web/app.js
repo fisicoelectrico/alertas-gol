@@ -150,6 +150,18 @@ function tarjetaPartido(p, cfg) {
   </article>`;
 }
 
+// Favorito local vs visitante: candidatos (¿hubo otro gol?) y alertas (acierto y ganancia)
+function tablaLado(lado) {
+  if (!lado?.length) return "";
+  const nombre = { home: "Local", away: "Visitante" };
+  const pctTxt = (a, b) => (b ? `${n(100 * a / b, 0)}%` : "–");
+  return `<div class="titulo-seccion"><h2>Favorito local vs visitante</h2></div>
+    <div class="tarjeta tabla-wrap"><table><thead><tr><th>Favorito</th><th title="Candidatos">Cand.</th><th title="Candidatos con otro gol / cerrados">Gol</th><th title="Alertas resueltas">Alertas</th><th>Acierto</th><th>Ganancia</th></tr></thead><tbody>
+    ${lado.map((x) => `<tr><td>${nombre[x.lado]}</td><td>${x.candidatos}</td><td>${pctTxt(x.con_gol, x.con_gol + x.sin_gol)}</td><td>${x.resueltas}</td><td>${pctTxt(x.aciertos, x.resueltas)}</td><td class="${Number(x.ganancia_u) > 0 ? "pos" : "neg"}">${n(x.ganancia_u)} u</td></tr>`).join("")}
+    </tbody></table></div>
+    <p class="nota">Con pocos partidos la diferencia puede ser azar: mírala cuando cada lado pase de 30.</p>`;
+}
+
 // ---------- radar: motivos de descarte ----------
 // Cada partido en vivo cae en un solo motivo (el primer filtro que no pasa, ver motivoRadar en
 // algoritmo.ts). Aquí se agrupan en 4 familias para leerlos de un vistazo.
@@ -176,6 +188,7 @@ function motivoInfo(mo, r) {
     fuera_ventana: ["regla", `Fuera de la ventana ${r.minuto_min ?? 46}'–${r.minuto_max ?? 85}'`],
     empatado: ["regla", "Empatado"],
     reempate: ["regla", "El favorito ya empató y le volvieron a marcar"],
+    roja_fav: ["regla", "El favorito tiene una tarjeta roja"],
     fav_con_goles: ["regla", `El favorito ya lleva más de ${r.goles_fav_max ?? 1} gol(es)`],
     favorito_no_pierde: ["regla", Number(r.diferencia_min) > 1 ? `El favorito no pierde por ${r.diferencia_min} o más` : "El favorito no va perdiendo"],
     sin_favorito_claro: ["regla", `Sin favorito claro (cuota > ${n(r.cuota_fav_max)})`],
@@ -488,6 +501,7 @@ const pantallas = {
       ${filas.map((f) => `<tr><td>${esc(f[col === "Liga" ? "liga" : "franja_minuto"])}</td><td>${esc(f.regla_version)}</td><td>${f.alertas}</td><td>${n(f.acierto_pct, 1)}%</td><td>${n(f.prob_implicita_pct, 1)}%</td><td class="${Number(f.roi_pct) > 0 ? "pos" : "neg"}">${n(f.roi_pct, 1)}%</td></tr>`).join("")}
       </tbody></table></div>`;
     return `${globales.map(bloque).join("")}
+      ${tablaLado(r.lado)}
       ${tabla("Por franja de minuto", r.filas.filter((f) => f.franja_minuto !== "(todas)"), "Franja")}
       ${tabla("Por liga", r.filas.filter((f) => f.liga !== "(todas)"), "Liga")}
       <p class="nota">Pendientes: ${r.conteo.pendientes} · anuladas: ${r.conteo.anuladas} · snapshots guardados: ${r.datos.snapshots}${r.conteo.excluidas ? ` · ${r.conteo.excluidas} alertas de ligas excluidas fuera del cálculo (no se borraron)` : ""}${r.conteo.fuera_ventana ? ` · ${r.conteo.fuera_ventana} alertas fuera de la ventana de minutos de la regla actual no cuentan (vuelven si amplías la ventana)` : ""}.</p>
@@ -612,6 +626,8 @@ const pantallas = {
         ${["minuto_min", "minuto_max", "cuota_fav_max", "diferencia_min", "dominancia_min", "cuota_objetivo", "momentum_ventana_min", "momentum_gap_min", ...(P.goles_fav_max ? ["goles_fav_max"] : [])].map((k) => campoNum(k)).join("")}
         ${P.excluir_reempate ? `<div class="campo"><label for="p-excluir_reempate">Excluir reempate roto<small>${esc(P.excluir_reempate.descripcion || "")}</small></label>
           <label class="sw"><input id="p-excluir_reempate" type="checkbox" data-k="excluir_reempate" data-tipo="bool" ${P.excluir_reempate.valor ? "checked" : ""}><span></span></label></div>` : ""}
+        ${P.excluir_roja_fav ? `<div class="campo"><label for="p-excluir_roja_fav">Excluir favorito con roja<small>${esc(P.excluir_roja_fav.descripcion || "")}</small></label>
+          <label class="sw"><input id="p-excluir_roja_fav" type="checkbox" data-k="excluir_roja_fav" data-tipo="bool" ${P.excluir_roja_fav.valor ? "checked" : ""}><span></span></label></div>` : ""}
         ${Object.keys(pesos).sort().map((k) => `<div class="campo"><label for="w-${k}">peso · ${esc(k)}<small>Peso en el Índice de Presión</small></label>
           <input id="w-${k}" type="number" step="any" inputmode="decimal" data-peso="${k}" value="${esc(pesos[k])}"></div>`).join("")}
       </div>
