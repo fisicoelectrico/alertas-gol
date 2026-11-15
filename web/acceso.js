@@ -254,6 +254,7 @@ function tarjetaAbierta(x) {
       <div class="marcador grande-m"><div class="equipo">${esc(x.local)}</div><div class="goles num">${x.goles_local ?? "–"} – ${x.goles_visitante ?? "–"}</div><div class="equipo der">${esc(x.visitante)}</div></div>
       ${gol ? "" : `<p class="porque">${esc(favNom)} es el favorito, va perdiendo y está atacando mucho.</p>
       <div class="sugerida"><div><small>Entrada sugerida</small><b>Habrá otro gol</b></div><div class="paga"><small>Paga</small><b class="num">${coma(cuota)}</b></div></div>`}
+      <button type="button" class="ver-ficha" data-ficha="${x.fixture_id}">Ver estadísticas del partido <span aria-hidden="true">›</span></button>
       ${mia}${tecnico}
     </article>`;
 }
@@ -287,15 +288,111 @@ function listaEnVivo(w, abiertas) {
   if (!vivos.length) return `<div class="titulo-seccion"><h2>En vivo</h2><small>${w.ts ? hace(w.ts) : ""}</small></div>
     <div class="tarjeta vacio" style="padding:16px">No hay partidos en vivo en este momento.</div>`;
   const cumplen = vivos.filter((p) => p.c).length;
-  const fila = (p) => `<div class="vfila ${p.c ? "cumple" : ""}">
+  const fila = (p) => `<button type="button" class="vfila ${p.c ? "cumple" : ""}" ${p.id != null ? `data-ficha="${esc(p.id)}"` : "disabled"} aria-label="Ver estadísticas de ${esc(p.l)} contra ${esc(p.v)}">
       <span class="vmin num">${p.e === "HT" ? "Desc." : p.m != null ? `${p.m}'` : esc(ESTADOS[p.e] || p.e)}</span>
       <span class="vequipos"><span>${esc(p.l)}${p.fav === "home" ? " <i class=\"vfav\">★</i>" : ""}</span><span>${esc(p.v)}${p.fav === "away" ? " <i class=\"vfav\">★</i>" : ""}</span></span>
       <b class="vgoles num">${p.gl}<br>${p.gv}</b>
       ${p.c ? `<span class="vcumple">Candidato</span>` : ""}
-    </div>`;
+      <span class="vflecha" aria-hidden="true">›</span>
+    </button>`;
   return `<div class="titulo-seccion"><h2>En vivo</h2><small>${vivos.length} partidos${cumplen ? ` · ${cumplen} candidato${cumplen === 1 ? "" : "s"}` : ""} · ${w.ts ? hace(w.ts) : ""}</small></div>
     <div class="tarjeta lista-vivo">${vivos.map(fila).join("")}</div>
-    <p class="nota explica">★ = favorito. "Candidato" = el favorito va perdiendo y lo estamos midiendo, pero todavía no cumple todo. No es señal para entrar: solo cuenta cuando llega la alerta.</p>`;
+    <p class="nota explica">Toca un partido para ver goles, tarjetas y estadísticas. ★ = favorito. "Candidato" = el favorito va perdiendo y lo estamos midiendo, pero todavía no cumple todo. No es señal para entrar: solo cuenta cuando llega la alerta.</p>`;
+}
+
+// ---------- Ficha del partido: tocar una alerta o una fila en vivo (15 nov) ----------
+// Para todos (admin y amigos): goles, tarjetas y estadísticas en palabras simples. Sin índices internos.
+// Sale de Flashscore a pedido (GET /partido): no gasta consultas de API-Football. Mientras la hoja está
+// abierta se refresca sola cada minuto.
+const ICONO_INC = { gol: "⚽", penal: "⚽", autogol: "⚽", penal_fallado: "✕", amarilla: "🟨", segunda_amarilla: "🟨🟥", roja: "🟥" };
+const NOMBRE_INC = { gol: "Gol", penal: "Gol de penal", autogol: "Autogol", penal_fallado: "Penal fallado", amarilla: "Amarilla", segunda_amarilla: "Doble amarilla", roja: "Roja" };
+
+function cuerpoFicha(d, previo) {
+  const local = d?.local ?? previo.local, visitante = d?.visitante ?? previo.visitante;
+  const gl = d?.goles_local ?? previo.gl, gv = d?.goles_visitante ?? previo.gv;
+  const est = d?.estado ?? previo.estado, min = d?.minuto ?? previo.minuto;
+  const fav = d?.favorito ?? previo.fav;
+  const enJuego = est === "1H" || est === "2H";
+  const estado = enJuego && min != null ? `EN VIVO · ${min}'` : est === "FT" ? "Terminado" : esc(ESTADOS[est] || est || "");
+  const cab = `<div class="liga-top">${esc(ligaTxt(d?.pais ?? previo.pais, d?.liga ?? previo.liga))}</div>
+    <div class="fila"><span class="vivo">${estado}</span></div>
+    <div class="marcador grande-m"><div class="equipo">${esc(local)}${fav === "home" ? ' <i class="vfav">★</i>' : ""}</div>
+      <div class="goles num">${gl ?? "–"} – ${gv ?? "–"}</div>
+      <div class="equipo der">${esc(visitante)}${fav === "away" ? ' <i class="vfav">★</i>' : ""}</div></div>`;
+  if (!d) return `${cab}<p class="vacio">Cargando estadísticas…</p>`;
+  if (d.error) return `${cab}<div class="tarjeta vacio">${esc(d.error)}</div>`;
+
+  const inc = (d.incidencias || []).slice().sort((a, b) => (parseInt(a.minuto) || 0) - (parseInt(b.minuto) || 0));
+  const filaInc = (i) => {
+    const quien = `<span class="inc-txt"><b>${esc(i.jugador || NOMBRE_INC[i.tipo] || "")}</b>${i.jugador ? `<small>${NOMBRE_INC[i.tipo] || ""}${i.detalle && i.tipo !== "amarilla" && i.tipo !== "roja" ? ` · asistencia ${esc(i.detalle)}` : ""}</small>` : ""}</span>`;
+    const ico = `<span class="inc-ico" aria-hidden="true">${ICONO_INC[i.tipo] || "•"}</span>`;
+    return `<div class="inc ${i.lado === "visitante" ? "der" : ""}"><span class="inc-min num">${esc(i.minuto)}</span>
+      ${i.lado === "visitante" ? `<span></span>${quien}${ico}` : `${ico}${quien}<span></span>`}</div>`;
+  };
+  const bloqueInc = inc.length ? `<div class="tarjeta inc-lista">${inc.map(filaInc).join("")}</div>`
+    : `<p class="nota">${(gl || 0) + (gv || 0) > 0 ? "No tenemos el detalle de los goles de este partido." : "Sin goles ni tarjetas todavía."}</p>`;
+
+  const st = d.estadisticas || [];
+  const barra = (x) => {
+    const a = Math.max(0, x.nl ?? 0), b = Math.max(0, x.nv ?? 0), t = a + b;
+    const pa = t ? Math.round(100 * a / t) : 50;
+    const gana = t && a !== b ? (a > b ? "l" : "v") : "";
+    return `<div class="st"><div class="st-fila"><b class="num ${gana === "l" ? "mas" : ""}">${esc(x.local)}</b><span>${esc(x.nombre)}</span><b class="num ${gana === "v" ? "mas" : ""}">${esc(x.visitante)}</b></div>
+      <div class="st-barra" aria-hidden="true"><i style="width:${pa}%"></i><i style="width:${100 - pa}%"></i></div></div>`;
+  };
+  const bloqueSt = st.length ? `<div class="tarjeta st-lista">${st.map(barra).join("")}</div>`
+    : `<div class="tarjeta vacio" style="padding:14px">Este partido no tiene estadísticas disponibles.</div>`;
+  return `${cab}
+    <h3 class="ficha-t">Goles y tarjetas</h3>${bloqueInc}
+    <h3 class="ficha-t">Estadísticas</h3>
+    ${st.length ? `<div class="st-equipos"><span>${esc(local)}</span><span>${esc(visitante)}</span></div>` : ""}${bloqueSt}
+    <p class="nota">Datos de Flashscore${d.fuente === "guardado" ? " (última lectura guardada)" : ""}. Se actualiza solo cada minuto mientras esté abierto.</p>`;
+}
+
+function hojaFicha(id, previo) {
+  const capa = document.createElement("div");
+  capa.className = "hoja-fondo";
+  capa.innerHTML = `<div class="hoja ficha" role="dialog" aria-modal="true" aria-label="Estadísticas del partido">
+      <div id="ficha-c">${cuerpoFicha(null, previo)}</div>
+      <button class="btn sec" id="ficha-cerrar">Cerrar</button>
+    </div>`;
+  document.body.appendChild(capa);
+  let vivo = true;
+  const cargar = async () => {
+    try {
+      const d = await get(`/partido?id=${encodeURIComponent(id)}`);
+      if (vivo) capa.querySelector("#ficha-c").innerHTML = cuerpoFicha(d, previo);
+    } catch (e) {
+      if (vivo && !capa.querySelector(".st-lista, .inc-lista")) capa.querySelector("#ficha-c").innerHTML = cuerpoFicha({ error: `No se pudo cargar: ${e.message}` }, previo);
+    }
+  };
+  const reloj = setInterval(() => { if (document.visibilityState === "visible") cargar(); }, 60000);
+  const cerrar = () => { vivo = false; clearInterval(reloj); capa.remove(); document.removeEventListener("keydown", tecla); };
+  const tecla = (e) => { if (e.key === "Escape") cerrar(); };
+  document.addEventListener("keydown", tecla);
+  capa.querySelector("#ficha-cerrar").addEventListener("click", cerrar);
+  capa.addEventListener("click", (e) => { if (e.target === capa) cerrar(); });
+  capa.querySelector("#ficha-cerrar").focus();
+  cargar();
+}
+
+function enlazarFichas(abiertas, w) {
+  const alertas = new Map(abiertas.map((a) => [String(a.fixture_id), a]));
+  const vivos = new Map((w?.partidos || []).filter((p) => p.id != null).map((p) => [String(p.id), p]));
+  const abrir = (id) => {
+    const a = alertas.get(id), p = vivos.get(id);
+    const previo = a ? { local: a.local, visitante: a.visitante, gl: a.goles_local, gv: a.goles_visitante, estado: a.estado,
+                         minuto: a.minuto_actual ?? a.minuto, fav: a.favorito, liga: a.liga, pais: a.pais }
+      : { local: p?.l, visitante: p?.v, gl: p?.gl, gv: p?.gv, estado: p?.e, minuto: p?.m, fav: p?.fav, liga: p?.liga, pais: null };
+    hojaFicha(id, previo);
+  };
+  document.querySelectorAll("[data-ficha]").forEach((b) => b.addEventListener("click", () => abrir(b.dataset.ficha)));
+  // Tocar el marcador de una alerta también abre la ficha (sin robar los botones Sí/No)
+  document.querySelectorAll(".tarjeta.abierta").forEach((t) => t.addEventListener("click", (e) => {
+    if (e.target.closest("button, a, input, .tecnico")) return;
+    const b = t.querySelector("[data-ficha]");
+    if (b) abrir(b.dataset.ficha);
+  }));
 }
 
 // ---------- pantallas nuevas ----------
@@ -305,7 +402,7 @@ Object.assign(pantallas, {
     const abiertas = lista.filter((a) => a.resultado === "pendiente");
     const hoyStr = new Date().toDateString();
     const m = metricas(lista.filter((a) => new Date(a.ts).toDateString() === hoyStr));
-    setTimeout(() => { enlazarBotones(abiertas); $("#btn-push")?.addEventListener("click", activarPush); });
+    setTimeout(() => { enlazarBotones(abiertas); enlazarFichas(abiertas, w); $("#btn-push")?.addEventListener("click", activarPush); });
     const avisoPush = push.puede ? `<div class="tarjeta aviso-push"><p><b>Activa los avisos</b> para que te lleguen las alertas aunque tengas la app cerrada.</p><button class="btn" id="btn-push">Activar avisos</button></div>`
       : !push.activa ? `<div class="tarjeta aviso-push"><p>${esc(push.texto)}</p></div>` : "";
     return `${YO ? `<p class="saludo">Hola, ${esc(YO.nombre.split(" ")[0])}</p>` : ""}

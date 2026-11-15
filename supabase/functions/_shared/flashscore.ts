@@ -270,3 +270,77 @@ export function emparejar(fs: PartidoFS[], api: FixtureApi[]): Map<string, { fix
   }
   return out;
 }
+
+// ---------------- Ficha del partido (pestaña Ahora, 15 nov 2026) ----------------
+// Lo que ve cualquier usuario al tocar un partido: incidencias y estadísticas. Se lee a pedido,
+// directo de Flashscore (no gasta consultas de API-Football).
+
+/** Todas las filas del bloque "Match" del feed de estadísticas, en orden: [nombre, local, visitante]. */
+export async function estadisticasTodas(id: string): Promise<[string, string, string][]> {
+  const t = await texto(`${FEED}/df_st_1_${id}`);
+  const out: [string, string, string][] = [];
+  const vistos = new Set<string>();
+  let bloque = "";
+  for (const c of registros(t)) {
+    if (c.SE !== undefined) { bloque = c.SE.toLowerCase(); continue; }
+    if (!c.SG || (bloque && bloque !== "match")) continue;
+    const k = c.SG.toLowerCase();
+    if (vistos.has(k)) continue;
+    vistos.add(k);
+    out.push([c.SG, c.SH ?? "", c.SI ?? ""]);
+  }
+  return out;
+}
+
+export interface IncidenciaFS {
+  minuto: string;                 // "23'", "45+2'"
+  lado: "local" | "visitante" | null;
+  tipo: "gol" | "autogol" | "penal" | "penal_fallado" | "amarilla" | "roja" | "segunda_amarilla" | "cambio" | "var" | "otro";
+  jugador: string | null;
+  detalle: string | null;         // asistencia, quién sale en el cambio…
+  texto: string;                  // tipo tal como lo da Flashscore (para depurar)
+}
+
+// Clasifica por el texto de Flashscore (idioma en). Poka-yoke: lo que no se reconoce queda como "otro"
+// y la pantalla no lo muestra; nunca se inventa un gol.
+function tipoIncidencia(t: string): IncidenciaFS["tipo"] {
+  const s = t.toLowerCase();
+  if (/own goal/.test(s)) return "autogol";
+  if (/missed penalty|penalty missed|penalty saved/.test(s)) return "penal_fallado";
+  if (/penalty/.test(s) && /goal|scored/.test(s)) return "penal";
+  if (/goal/.test(s)) return "gol";
+  if (/(second|2nd) yellow|yellow.?red/.test(s)) return "segunda_amarilla";
+  if (/\bred\b/.test(s)) return "roja";
+  if (/yellow/.test(s)) return "amarilla";
+  if (/substitution/.test(s)) return "cambio";
+  if (/\bvar\b/.test(s)) return "var";
+  return "otro";
+}
+
+/**
+ * Incidencias del partido (feed df_sui_1_{id}). Formato observado en la web de Flashscore: cada
+ * incidencia empieza con III (id) y trae IA (1 local, 2 visitante), IB (minuto), IK (tipo en texto)
+ * e IF (jugador). Las filas siguientes sin III (asistencia, jugador que sale) se pegan a la anterior.
+ * Devuelve también el texto crudo recortado para que el administrador pueda revisar el formato.
+ */
+export async function incidencias(id: string): Promise<{ lista: IncidenciaFS[]; crudo: string }> {
+  const t = await texto(`${FEED}/df_sui_1_${id}`);
+  const lista: IncidenciaFS[] = [];
+  let actual: IncidenciaFS | null = null;
+  for (const c of registros(t)) {
+    const nuevo = c.III !== undefined || (c.IB !== undefined && c.IK !== undefined);
+    if (nuevo && (c.IB || c.IK)) {
+      const txt = c.IK ?? c.ICT ?? "";
+      actual = {
+        minuto: c.IB ?? "", lado: c.IA === "1" ? "local" : c.IA === "2" ? "visitante" : null,
+        tipo: tipoIncidencia(txt), jugador: c.IF ?? null, detalle: null, texto: txt,
+      };
+      lista.push(actual);
+    } else if (actual && c.IF && c.IF !== actual.jugador) {
+      // Segunda persona de la misma incidencia: asistencia en un gol, el que sale en un cambio
+      if (!actual.detalle) actual.detalle = c.IF;
+      if (actual.tipo === "otro" && c.IK) { actual.tipo = tipoIncidencia(c.IK); actual.texto = c.IK; }
+    }
+  }
+  return { lista, crudo: t.slice(0, 3000) };
+}

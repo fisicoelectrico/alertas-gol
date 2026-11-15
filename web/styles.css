@@ -469,3 +469,39 @@ button.hfila:active { background: var(--panel-2); }
 
 /* País · liga encima de cada alerta (15 nov): siempre visible, en verde */
 .liga-top { display: block; font-size: 12px; font-weight: 700; color: var(--cesped); letter-spacing: .03em; text-transform: uppercase; margin-bottom: 2px; }
+
+/* Ficha del partido (15 nov): tocar una alerta o una fila en vivo abre goles, tarjetas y estadísticas */
+.tarjeta.abierta { cursor: pointer; }
+.ver-ficha { display: flex; justify-content: center; gap: 6px; width: 100%; margin: 10px 0 2px; padding: 9px; background: rgba(255, 255, 255, .04); border: 1px solid var(--linea); border-radius: 12px; color: var(--texto); font-size: 14px; font-weight: 600; cursor: pointer; }
+.ver-ficha:active { background: var(--panel-2); }
+button.vfila { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--linea); color: inherit; text-align: left; font: inherit; cursor: pointer; grid-template-columns: 44px 1fr auto 14px; grid-template-areas: "min eq goles fl" "min cumple goles fl"; }
+button.vfila:last-child { border-bottom: 0; }
+button.vfila:active { background: var(--panel-2); }
+button.vfila:disabled { cursor: default; }
+.vflecha { grid-area: fl; color: var(--tenue); font-size: 18px; text-align: right; }
+button.vfila:disabled .vflecha { visibility: hidden; }
+.hoja.ficha .marcador { margin: 4px 0 2px; }
+.ficha-t { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--tenue); margin-top: 8px; }
+.inc-lista { padding: 4px 12px; }
+.inc { display: grid; grid-template-columns: 44px 26px 1fr 26px; align-items: center; gap: 6px; padding: 7px 0; border-bottom: 1px solid var(--linea); }
+.inc:last-child { border-bottom: 0; }
+.inc.der { grid-template-columns: 44px 26px 1fr 26px; }
+.inc.der .inc-txt { text-align: right; }
+.inc-min { color: var(--cesped); font-size: 13px; }
+.inc-ico { text-align: center; font-size: 15px; }
+.inc-txt { display: flex; flex-direction: column; min-width: 0; }
+.inc-txt b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inc-txt small { color: var(--tenue); font-size: 12px; }
+.st-equipos { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; color: var(--tenue); padding: 0 4px; }
+.st-equipos span { max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-lista { padding: 6px 12px; }
+.st { padding: 7px 0; }
+.st-fila { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 14px; }
+.st-fila span { color: var(--tenue); font-size: 13px; text-align: center; }
+.st-fila b { min-width: 42px; font-weight: 600; }
+.st-fila b:last-child { text-align: right; }
+.st-fila b.mas { color: var(--cesped); font-weight: 800; }
+.st-barra { display: flex; gap: 3px; height: 5px; margin-top: 5px; }
+.st-barra i { display: block; border-radius: 3px; background: var(--linea); }
+.st-barra i:first-child { background: var(--cesped); }
+.st-barra i:last-child { background: var(--azul); }
