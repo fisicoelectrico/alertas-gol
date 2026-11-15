@@ -67,7 +67,9 @@ export function parsearCuotaCorners(resp: any, alcance: "1T" | "partido", linea:
     if (/team|home|away|race|which|last|first corner|1x2|handicap/i.test(nombre)) continue;
     if (alcance === "1T" ? !es1T : esMitad) continue;
     hayMercado = true;
-    const enteras = /match corners|exact/i.test(nombre);
+    // Líneas enteras de 3 vías ("Match Corners", "Total Corners (3 way) (1st Half)"): "Over 2" = 3 o más,
+    // igual que la línea 2,5. Visto el 15 nov en el primer aviso real: el 1T ofrecía "Over 2" (3 vías) y 2,5.
+    const enteras = /match corners|3 ?way|exact/i.test(nombre);
     for (const v of m.values ?? []) {
       if (!/^over/i.test(String(v.value)) || v.suspended) continue;
       const l = num(v.handicap) ?? num(String(v.value).replace(/over/i, ""));
