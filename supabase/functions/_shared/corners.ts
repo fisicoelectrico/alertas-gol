@@ -2,6 +2,11 @@
 // Mercado experimental de CÓRNERS (DECISIONES 37). Solo para administradores: ni push ni pantalla
 // para visores. Vive aparte del radar de goles: tabla propia, versión propia (c1, c2…) y su propio
 // interruptor (config.corners_activo). Si algo falla aquí, el radar de goles sigue igual.
+// Tres llaves independientes (15 nov, Fredy quiere juntar datos un buen tiempo sin ruido ni gasto):
+//   corners_activo  detecta y guarda los avisos (si se apaga, solo se terminan de resolver los pendientes)
+//   corners_push    manda las push al administrador (apagada = el laboratorio corre en silencio)
+//   corners_cuota   gasta 1 consulta de API-Football por aviso para leer la cuota (apagada = 0 consultas)
+// Ninguna cambia la regla: la versión vigente sigue igual y los datos se comparan sin mezclar.
 //
 // Dos avisos, ambos para "entrar a 2 córners más" (objetivo = corners_objetivo, por defecto 2):
 //   c1t_cero20  Partido con 0 córners entre el 20' y el 26' del 1T  → "más de 1,5 córners en el 1T".
@@ -100,7 +105,7 @@ export async function cicloCorners(args: {
   cfg: Config; vivosFS: FS.PartidoFS[]; conocidos: Map<string, any>; api: ApiFootball; log: (s: string) => void;
 }) {
   const { cfg, vivosFS, conocidos, api, log } = args;
-  await resolverCorners(vivosFS, log);
+  await resolverCorners(vivosFS, log, cfg.corners_push !== false);
   if (cfg.corners_activo !== true) return;
 
   const P = parametrosCorners(cfg);
@@ -178,7 +183,8 @@ export async function cicloCorners(args: {
     const linea = total + P.objetivo - 0.5;   // 0 córners → 1,5; 7 córners → 8,5
     let cuota: number | null = null, mercadoNombre: string | null = null, hayMercado: boolean | null = null;
     let vistos: any = null, consultada = false, motivoSinCuota: string | null = null;
-    if (!fx) motivoSinCuota = "sin_pareja_api";
+    if (cfg.corners_cuota === false) motivoSinCuota = "cuota_apagada";
+    else if (!fx) motivoSinCuota = "sin_pareja_api";
     else if (cupoApi <= 0) motivoSinCuota = "tope_diario";
     else if (api.quedan() < 1) motivoSinCuota = "sin_presupuesto_api";
     else {
@@ -212,7 +218,7 @@ export async function cicloCorners(args: {
     const cuerpo = mercado === "c1t_cero20"
       ? `Córners 1T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. Sin córners todavía. Entrada: más de ${coma(linea)} córners en el 1T${precio}.`
       : `Córners 2T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. ${fav} es favorito y va perdiendo. Van ${total} córners. Entrada: más de ${coma(linea)}${precio}.`;
-    const n = await notificar({
+    const n = cfg.corners_push === false ? 0 : await notificar({
       titulo: ligaFS(p.liga).txt,
       cuerpo, url: "./#corners", tag: `corner-${al.id}`,
     }, { soloAdmin: true });
@@ -236,7 +242,7 @@ async function chequeo(p: FS.PartidoFS, mercado: Mercado, minuto: number, ck: [n
  * Si el partido desaparece de la lista (se cambió el día UTC) se busca en la de ayer; a las 4 h sin
  * desenlace se anula (aplazado, suspendido o sin datos), y no cuenta para el acierto.
  */
-async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void) {
+async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void, conPush: boolean) {
   const pend = await sql`select id, mercado, fs_id, liga, local, visitante, corners_local + corners_visitante as ck0, objetivo, cuota, ts
                          from futbol.alertas_corners where resultado = 'pendiente' order by ts limit 20`;
   if (!pend.length) return;
@@ -277,7 +283,7 @@ async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void
                         where id = ${a.id} and resultado = 'pendiente' returning id`;
     if (!r.length) continue;
     const tiempo = a.mercado === "c1t_cero20" ? " en el 1T" : "";
-    await notificar({
+    if (conPush) await notificar({
       titulo: ligaFS(a.liga).txt,
       cuerpo: `${gano ? "✅ Salió" : "❌ No salió"}, córners${tiempo}: ${a.local} ${p.gl}–${p.gv} ${a.visitante}: ${ahora} córners${tiempo} (necesitaba ${meta})${gano && em.minuto ? `, al ${em.minuto}'` : ""}.${a.cuota ? ` Cuota ${cuotaTxt(a.cuota)}.` : ""}`,
       url: "./#corners", tag: `corner-${a.id}`,
