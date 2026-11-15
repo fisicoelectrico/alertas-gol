@@ -345,8 +345,7 @@ function cuerpoFicha(d, previo) {
   return `${cab}
     <h3 class="ficha-t">Goles y tarjetas</h3>${bloqueInc}
     <h3 class="ficha-t">Estadísticas</h3>
-    ${st.length ? `<div class="st-equipos"><span>${esc(local)}</span><span>${esc(visitante)}</span></div>` : ""}${bloqueSt}
-    <p class="nota">Datos de Flashscore${d.fuente === "guardado" ? " (última lectura guardada)" : ""}. Se actualiza solo cada minuto mientras esté abierto.</p>`;
+    ${st.length ? `<div class="st-equipos"><span>${esc(local)}</span><span>${esc(visitante)}</span></div>` : ""}${bloqueSt}`;
 }
 
 function hojaFicha(id, previo) {
