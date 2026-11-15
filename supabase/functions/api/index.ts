@@ -13,6 +13,8 @@
 //   GET  /widget         conteo y lista compacta para el widget de Android
 //   GET  /radar          pestaña "Radar": todos los partidos en vivo del último barrido y por qué se descartan
 //   GET  /alertas        pendientes y resueltas
+//   GET  /partido?id=…   ficha de un partido (incidencias + estadísticas) para cualquier usuario; id = fixture
+//                        de API-Football o "fs:<id Flashscore>". Lee Flashscore a pedido: 0 consultas de API-Football
 //   GET  /rendimiento    acierto vs implícita, ROI (v_rendimiento) + historial por liga (v_ligas_historial)
 //   GET  /ligas          ligas vistas y su rendimiento
 //   GET  /candidatos?dias=14  candidatos (con y sin alerta), su desenlace y la serie de snapshots
@@ -42,6 +44,7 @@ import { sql, leerConfig } from "../_shared/db.ts";
 import { notificar } from "../_shared/notificar.ts";
 import { canjear, enlaceNuevo, leerSesion, modoAcceso, normalizarTelefono, Sesion, sha256, tokenNuevo } from "../_shared/acceso.ts";
 import { estadoPresupuesto } from "../_shared/apifootball.ts";
+import * as FS from "../_shared/flashscore.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -158,7 +161,7 @@ async function widget() {
     select fixture_id from futbol.partidos where seguimiento
     union select fixture_id from futbol.alertas where resultado = 'pendiente'`).map((r: any) => String(r.fixture_id)));
   const partidos = (u.radar ?? []).map((p: any) => ({
-    e: p.e, m: p.m, l: p.l, v: p.v, gl: p.gl, gv: p.gv, fav: p.fav, liga: p.liga, c: segs.has(String(p.id)),
+    id: p.id, e: p.e, m: p.m, l: p.l, v: p.v, gl: p.gl, gv: p.gv, fav: p.fav, liga: p.liga, c: segs.has(String(p.id)),
   })).sort((a: any, b: any) => Number(b.c) - Number(a.c) || (b.m ?? -1) - (a.m ?? -1));
   return { ts: u.ts, vivos: u.partidos_vivos ?? partidos.length, candidatos: partidos.filter((p: any) => p.c).length, partidos };
 }
@@ -520,6 +523,107 @@ async function cambiarConfig(cambios: Record<string, unknown>, nota?: string) {
   });
 }
 
+// ---------- Ficha del partido (pestaña Ahora) ----------
+// Nombres de Flashscore (en) → nombre simple en español, en el orden en que se muestran. Lo que no está
+// aquí no se muestra (poka-yoke: la ficha es para gente común; nada de jerga ni filas raras).
+const STATS_ES: [string, string][] = [
+  ["ball possession", "Posesión"],
+  ["expected goals (xg)", "Goles esperados (xG)"],
+  ["big chances", "Ocasiones claras"],
+  ["total shots", "Remates"],
+  ["shots on target", "Remates al arco"],
+  ["shots off target", "Remates afuera"],
+  ["blocked shots", "Remates bloqueados"],
+  ["shots inside the box", "Remates dentro del área"],
+  ["hit the woodwork", "Remates al palo"],
+  ["dangerous attacks", "Ataques peligrosos"],
+  ["attacks", "Ataques"],
+  ["corner kicks", "Córners"],
+  ["goalkeeper saves", "Atajadas del arquero"],
+  ["offsides", "Fueras de lugar"],
+  ["fouls", "Faltas"],
+  ["free kicks", "Tiros libres"],
+  ["yellow cards", "Tarjetas amarillas"],
+  ["red cards", "Tarjetas rojas"],
+];
+const numStat = (v: string) => { const n = parseFloat(String(v ?? "").replace(",", ".")); return Number.isFinite(n) ? n : null; };
+function statsEnEspañol(filas: [string, string, string][]) {
+  const porNombre = new Map(filas.map(([n, l, v]) => [n.toLowerCase(), [l, v]]));
+  const out: { nombre: string; local: string; visitante: string; nl: number | null; nv: number | null }[] = [];
+  for (const [k, es] of STATS_ES) {
+    const x = porNombre.get(k);
+    if (!x || (x[0] === "" && x[1] === "")) continue;
+    out.push({ nombre: es, local: x[0], visitante: x[1], nl: numStat(x[0]), nv: numStat(x[1]) });
+  }
+  return out;
+}
+
+// Caché corta por instancia: varios amigos abriendo el mismo partido no multiplican las lecturas a Flashscore.
+const cacheFicha = new Map<string, { t: number; d: any }>();
+
+async function fichaPartido(idPedido: string, conCrudo: boolean) {
+  let fsId: string | null = null, fixtureId: number | null = null;
+  if (idPedido.startsWith("fs:")) fsId = idPedido.slice(3).replace(/[^A-Za-z0-9]/g, "") || null;
+  else if (/^\d+$/.test(idPedido)) fixtureId = Number(idPedido);
+  if (!fsId && !fixtureId) return { error: "partido no válido" };
+
+  const [fsRow] = fixtureId
+    ? await sql`select fs_id, local, visitante, liga from futbol.fs_partidos where fixture_id = ${fixtureId} order by creado desc limit 1`
+    : await sql`select fs_id, fixture_id, local, visitante, liga from futbol.fs_partidos where fs_id = ${fsId}`;
+  fsId = fsId ?? fsRow?.fs_id ?? null;
+  fixtureId = fixtureId ?? fsRow?.fixture_id ?? null;
+  const [p] = fixtureId ? await sql`
+    select p.local, p.visitante, p.estado, p.minuto, p.goles_local, p.goles_visitante, p.favorito, l.nombre as liga, l.pais
+    from futbol.partidos p left join futbol.ligas l on l.id = p.liga_id where p.fixture_id = ${fixtureId}` : [];
+
+  const clave = `${fsId ?? ""}|${fixtureId ?? ""}`;
+  const c = cacheFicha.get(clave);
+  if (c && Date.now() - c.t < 45000 && !conCrudo) return c.d;
+
+  let stats: ReturnType<typeof statsEnEspañol> = [];
+  let incid: FS.IncidenciaFS[] = [];
+  let crudo: string | null = null;
+  let fuente = "flashscore";
+  const errores: string[] = [];
+  if (fsId) {
+    const [st, inc] = await Promise.allSettled([FS.estadisticasTodas(fsId), FS.incidencias(fsId)]);
+    if (st.status === "fulfilled") stats = statsEnEspañol(st.value); else errores.push(String(st.reason?.message ?? st.reason));
+    if (inc.status === "fulfilled") { incid = inc.value.lista; crudo = inc.value.crudo; } else errores.push(String(inc.reason?.message ?? inc.reason));
+  }
+  // Respaldo sin Flashscore: lo último guardado por el escáner (solo partidos en seguimiento)
+  if (!stats.length && fixtureId) {
+    const [s] = await sql`select raw->'fixture'->'__extra' as extra from futbol.snapshots
+                          where fixture_id = ${fixtureId} and raw->'fixture'->'__extra' is not null order by ts desc limit 1`;
+    if (s?.extra) { stats = statsEnEspañol(Object.entries(s.extra as Record<string, [string, string]>).map(([n, [l, v]]) => [n, l, v])); fuente = "guardado"; }
+  }
+  // Goles con minuto desde los cambios de marcador si Flashscore no dio incidencias legibles
+  let goles = incid.filter((i) => i.tipo === "gol" || i.tipo === "autogol" || i.tipo === "penal");
+  if (!goles.length && fixtureId) {
+    const cm = await sql`select minuto, gl_antes, gv_antes, gl, gv from futbol.cambios_marcador
+                         where fixture_id = ${fixtureId} order by ts`;
+    for (const r of cm) {
+      const dl = (r.gl ?? 0) - (r.gl_antes ?? 0), dv = (r.gv ?? 0) - (r.gv_antes ?? 0);
+      for (let k = 0; k < dl; k++) incid.push({ minuto: r.minuto != null ? `${r.minuto}'` : "", lado: "local", tipo: "gol", jugador: null, detalle: null, texto: "cambio de marcador" });
+      for (let k = 0; k < dv; k++) incid.push({ minuto: r.minuto != null ? `${r.minuto}'` : "", lado: "visitante", tipo: "gol", jugador: null, detalle: null, texto: "cambio de marcador" });
+    }
+  }
+  const visibles = new Set(["gol", "autogol", "penal", "penal_fallado", "amarilla", "roja", "segunda_amarilla"]);
+  const d: any = {
+    fixture_id: fixtureId, fs_id: fsId,
+    local: p?.local ?? fsRow?.local ?? null, visitante: p?.visitante ?? fsRow?.visitante ?? null,
+    liga: p?.liga ?? fsRow?.liga?.replace(/ - .*$/, "") ?? null, pais: p?.pais ?? null,
+    estado: p?.estado ?? null, minuto: p?.minuto ?? null, goles_local: p?.goles_local ?? null, goles_visitante: p?.goles_visitante ?? null,
+    favorito: p?.favorito ?? null,
+    incidencias: incid.filter((i) => visibles.has(i.tipo)).map(({ texto: _t, ...i }) => i),
+    estadisticas: stats, fuente: stats.length ? fuente : null, ts: new Date().toISOString(),
+  };
+  if (errores.length) d.errores = errores;
+  if (conCrudo) { d.crudo_incidencias = crudo; d.incidencias_todas = incid; }
+  cacheFicha.set(clave, { t: Date.now(), d });
+  if (cacheFicha.size > 200) cacheFicha.delete(cacheFicha.keys().next().value!);
+  return d;
+}
+
 // Rutas que funcionan siempre sin sesión
 const PUBLICAS_GET = new Set(["/vapid", "/widget", "/yo"]);
 // Lo técnico: con modo cerrado, solo administradores
@@ -548,6 +652,11 @@ Deno.serve(async (req) => {
       if (ruta === "/resumen") return json(await resumen());
       if (ruta === "/alertas") return json(await alertas(yo));
       if (ruta === "/radar") return json(await radar());
+      if (ruta === "/partido") {
+        // ?crudo=1 (solo admin): texto crudo de Flashscore para revisar el formato de las incidencias
+        const crudo = url.searchParams.get("crudo") === "1" && (abierto || yo?.rol === "admin");
+        return json(await fichaPartido(String(url.searchParams.get("id") ?? ""), crudo));
+      }
       if (ruta === "/widget") return json(await widget());
       if (ruta === "/rendimiento") return json(await rendimiento());
       if (ruta === "/ligas") return json(await ligas());
