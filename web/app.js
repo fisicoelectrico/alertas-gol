@@ -350,7 +350,7 @@ function tarjetaCandidato(c, cfg) {
       <div class="mini-ley"><span><i class="la"></i>favorito</span><span><i class="lb"></i>rival</span><span><i class="lu"></i>umbral</span>${gol ? `<span><i class="lg"></i>gol posterior</span>` : ""}<span>${x0}'–${x1}'</span></div>
     </div>
     <details class="tabla-cand"><summary>Ver tabla de snapshots</summary>
-      <div class="tabla-wrap"><table><thead><tr><th>Min</th><th>Marc.</th><th>IP fav/riv</th><th>D</th><th>M</th><th>AP</th><th>Có</th><th>Over</th></tr></thead><tbody>
+      <div class="tabla-wrap"><table><thead><tr><th>Min</th><th>Marc.</th><th>IP fav/riv</th><th title="Dominancia: presión fav ÷ rival en todo el partido">Dominancia</th><th title="Momentum: presión fav ÷ rival en los últimos ~15 min">Momentum</th><th>AP</th><th>Có</th><th>Over</th></tr></thead><tbody>
       ${pts.map((p) => `<tr><td>${p.m}'</td><td>${p.gl}–${p.gv}</td><td>${n(lado(p, "ip"), 1)} / ${n(otro(p, "ip"), 1)}</td><td class="${p.okd === true ? "pos" : ""}">${n(p.d)}</td><td class="${p.okm === true ? "pos" : ""}">${n(p.mo)}</td><td>${lado(p, "ap") ?? "–"}/${otro(p, "ap") ?? "–"}</td><td>${lado(p, "co") ?? "–"}/${otro(p, "co") ?? "–"}</td><td>${n(p.c)}</td></tr>`).join("")}
       </tbody></table></div>
       ${(c.goles || []).length ? `<p class="nota">Cambios de marcador: ${c.goles.map((g) => `${g.gl_antes}–${g.gv_antes} → ${g.gl}–${g.gv} (${g.minuto_antes ?? "?"}'–${g.minuto ?? "?"}')`).join(" · ")}</p>` : ""}

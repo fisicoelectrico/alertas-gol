@@ -349,6 +349,9 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .marcada { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 12px; padding: 10px 12px; background: var(--panel-2); border-radius: 12px; font-size: 14px; }
 p.marcada { display: block; }
 .tecnico { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--linea); font: 12px var(--mono); color: var(--tenue); }
+.tecnico small { font: inherit; opacity: .8; }
+.tecnico b { font-weight: 600; color: var(--texto); }
+.tecnico-ayuda { flex-basis: 100%; margin: 2px 0 0; font: 11px/1.4 inherit; color: var(--tenue); }
 .tarjeta.hoy { display: flex; justify-content: space-between; align-items: center; }
 .tarjeta.hoy span { color: var(--tenue); }
 
