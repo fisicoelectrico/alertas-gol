@@ -21,7 +21,7 @@ import { sql, Config } from "./db.ts";
 import * as FS from "./flashscore.ts";
 import * as A from "./algoritmo.ts";
 import { ApiFootball } from "./apifootball.ts";
-import { notificar, cuotaTxt } from "./notificar.ts";
+import { notificar, cuotaTxt, ligaFS } from "./notificar.ts";
 
 type Mercado = "c1t_cero20" | "c2t_fav77";
 
@@ -80,6 +80,19 @@ export function parsearCuotaCorners(resp: any, alcance: "1T" | "partido", linea:
     }
   }
   return { hayMercado, cuota: elegida?.cuota ?? null, mercado: elegida?.mercado ?? null, vistos };
+}
+
+/** Texto con las cuotas de "exactamente N" y "más de N" (3 vías) del mismo tiempo, si la respuesta las trae. */
+function alternativas(vistos: Record<string, Record<string, number>> | null, alcance: "1T" | "partido", meta: number): string | null {
+  if (!vistos) return null;
+  for (const [nombre, valores] of Object.entries(vistos)) {
+    const es1T = /1st|first/i.test(nombre), esMitad = /half/i.test(nombre);
+    if (!/3 ?way/i.test(nombre) || (alcance === "1T" ? !es1T : esMitad)) continue;
+    const exacto = valores[`Exactly ${meta}`], mas = valores[`Over ${meta}`];
+    const partes = [mas ? `más de ${meta} paga ${cuotaTxt(mas)}` : null, exacto ? `exactamente ${meta} paga ${cuotaTxt(exacto)}` : null].filter(Boolean);
+    if (partes.length) return partes.join(", ");
+  }
+  return null;
 }
 
 /** Un ciclo del mercado de córners. Se llama desde el ciclo Flashscore del escáner. */
@@ -192,12 +205,15 @@ export async function cicloCorners(args: {
     await chequeo(p, mercado, minuto, actual, true, null);
     if (!al) continue;
 
-    const precio = cuota ? `paga ${cuotaTxt(cuota)}` : motivoSinCuota === "tope_diario" ? "sin cuota (tope diario)" : "sin cuota en API: revísala en tu casa";
+    // Sin la línea exacta, las alternativas del mismo tiempo (visto en el 1T: "más de 2" y "exactamente 2").
+    // La fuente de la cuota no se muestra (Fredy, 15 nov).
+    const alt = cuota ? null : alternativas(vistos, mercado === "c1t_cero20" ? "1T" : "partido", total + P.objetivo);
+    const precio = cuota ? `, paga ${cuotaTxt(cuota)}` : alt ? `. Sin esa línea: ${alt}` : "";
     const cuerpo = mercado === "c1t_cero20"
-      ? `${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. Sin córners todavía. Entrada: más de ${coma(linea)} córners en el 1T, ${precio}.`
-      : `${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. ${fav} es favorito y va perdiendo. Van ${total} córners. Entrada: más de ${coma(linea)} córners, ${precio}.`;
+      ? `Córners 1T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. Sin córners todavía. Entrada: más de ${coma(linea)} córners en el 1T${precio}.`
+      : `Córners 2T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. ${fav} es favorito y va perdiendo. Van ${total} córners. Entrada: más de ${coma(linea)}${precio}.`;
     const n = await notificar({
-      titulo: mercado === "c1t_cero20" ? "🚩 Córners 1T · laboratorio" : "🚩 Córners 2T · laboratorio",
+      titulo: ligaFS(p.liga).txt,
       cuerpo, url: "./#corners", tag: `corner-${al.id}`,
     }, { soloAdmin: true });
     await sql`update futbol.alertas_corners set push_enviados = ${n} where id = ${al.id}`;
@@ -221,7 +237,7 @@ async function chequeo(p: FS.PartidoFS, mercado: Mercado, minuto: number, ck: [n
  * desenlace se anula (aplazado, suspendido o sin datos), y no cuenta para el acierto.
  */
 async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void) {
-  const pend = await sql`select id, mercado, fs_id, local, visitante, corners_local + corners_visitante as ck0, objetivo, cuota, ts
+  const pend = await sql`select id, mercado, fs_id, liga, local, visitante, corners_local + corners_visitante as ck0, objetivo, cuota, ts
                          from futbol.alertas_corners where resultado = 'pendiente' order by ts limit 20`;
   if (!pend.length) return;
   const hoy = new Map(vivosFS.map((p) => [p.id, p]));
@@ -262,8 +278,8 @@ async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void
     if (!r.length) continue;
     const tiempo = a.mercado === "c1t_cero20" ? " en el 1T" : "";
     await notificar({
-      titulo: gano ? `✅ Salió · córners${tiempo}` : `❌ No salió · córners${tiempo}`,
-      cuerpo: `${a.local} ${p.gl}–${p.gv} ${a.visitante}: ${ahora} córners${tiempo} (necesitaba ${meta})${gano && em.minuto ? `, al ${em.minuto}'` : ""}.${a.cuota ? ` Cuota ${cuotaTxt(a.cuota)}.` : ""}`,
+      titulo: ligaFS(a.liga).txt,
+      cuerpo: `${gano ? "✅ Salió" : "❌ No salió"}, córners${tiempo}: ${a.local} ${p.gl}–${p.gv} ${a.visitante}: ${ahora} córners${tiempo} (necesitaba ${meta})${gano && em.minuto ? `, al ${em.minuto}'` : ""}.${a.cuota ? ` Cuota ${cuotaTxt(a.cuota)}.` : ""}`,
       url: "./#corners", tag: `corner-${a.id}`,
     }, { soloAdmin: true });
     log(`córners: alerta ${a.id} ${gano ? "acierto" : "fallo"} (${ahora}/${meta})`);

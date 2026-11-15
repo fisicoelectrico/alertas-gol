@@ -237,7 +237,8 @@ function tarjetaAbierta(x) {
     : `<p class="pregunta">¿Entraste?</p><div class="dos"><button class="btn grande" data-entre="${x.id}">Sí, entré</button><button class="btn sec grande" data-no="${x.id}">No</button></div>`;
   const tecnico = esAdmin() ? `<div class="tecnico"><span>D ${coma(x.dominancia)}</span><span>M ${coma(x.momentum)}</span><span>Over ${esc(x.linea_over)}</span><span>Entraron ${x.entraron}</span><span>Push ${x.push_enviados ?? 0}</span></div>` : "";
   return `<article class="tarjeta abierta ${gol ? "con-gol" : ""}">
-      <div class="fila"><span class="vivo">${gol ? "¡GOL! · esperando el final" : enJuego ? `EN VIVO · ${x.minuto_actual ?? x.minuto}'` : esc(ESTADOS[x.estado] || x.estado || "")}</span><span class="liga">${esc(x.pais ? `${x.pais} · ` : "")}${esc(x.liga)}</span></div>
+      <div class="liga-top">${esc(ligaTxt(x.pais, x.liga))}</div>
+      <div class="fila"><span class="vivo">${gol ? "¡GOL! · esperando el final" : enJuego ? `EN VIVO · ${x.minuto_actual ?? x.minuto}'` : esc(ESTADOS[x.estado] || x.estado || "")}</span></div>
       <div class="marcador grande-m"><div class="equipo">${esc(x.local)}</div><div class="goles num">${x.goles_local ?? "–"} – ${x.goles_visitante ?? "–"}</div><div class="equipo der">${esc(x.visitante)}</div></div>
       ${gol ? "" : `<p class="porque">${esc(favNom)} es el favorito, va perdiendo y está atacando mucho.</p>
       <div class="sugerida"><div><small>Entrada sugerida</small><b>Habrá otro gol</b></div><div class="paga"><small>Paga</small><b class="num">${coma(cuota)}</b></div></div>`}
@@ -327,7 +328,7 @@ Object.assign(pantallas, {
       const ok = a.resultado === "acierto";
       const tag = YO ? `button type="button" class="hfila tocable" data-hist="${a.id}" aria-label="Marcar entrada en ${esc(a.local)} contra ${esc(a.visitante)}"` : `div class="hfila"`;
       return `<${tag}><span class="marca-res ${ok ? "pos" : "neg"}">${ok ? "✓" : "✕"}</span>
-        <div class="hcuerpo"><b>${esc(a.local)} ${a.goles_local_90 ?? a.goles_local}–${a.goles_visitante_90 ?? a.goles_visitante} ${esc(a.visitante)}</b>
+        <div class="hcuerpo"><small class="liga-top">${esc(ligaTxt(a.pais, a.liga))}</small><b>${esc(a.local)} ${a.goles_local_90 ?? a.goles_local}–${a.goles_visitante_90 ?? a.goles_visitante} ${esc(a.visitante)}</b>
           <small>Alerta al ${a.minuto}' · ${coma(a.cuota)} · ${ok ? `gol al ${a.minuto_gol ?? "?"}'` : "no hubo gol"} · ${hora(a.ts)}</small></div>
         ${a.mi_decision === "entre" ? `<span class="chip entraste">ENTRASTE${a.mi_tardia ? "*" : ""}</span>` : YO ? `<span class="marcar-mas" aria-hidden="true">＋</span>` : ""}</${YO ? "button" : "div"}>`;
     };
@@ -464,12 +465,13 @@ Object.assign(pantallas, {
         <td class="${Number(x.ganancia_u) > 0 ? "pos" : Number(x.ganancia_u) < 0 ? "neg" : ""}">${n(x.ganancia_u)} u</td></tr>`;
     }).join("");
     const fila = (a) => `<div class="tarjeta ${a.resultado === "acierto" ? "acierto" : a.resultado === "fallo" ? "fallo" : ""}">
+        <div class="liga-top">${esc(ligaFS(a.liga).txt)}</div>
         <div class="fila detalle"><span><b>${esc(NOMBRE[a.mercado] || a.mercado)}</b> · ${esc(a.version)}</span><span>${esc(RES[a.resultado] || a.resultado)}</span></div>
         <p style="margin:6px 0 2px">${esc(a.local)} <b class="num">${a.goles_local}–${a.goles_visitante}</b> ${esc(a.visitante)} · min ${a.minuto}
           ${a.favorito ? `<small class="sub">favorito: ${esc(a.favorito === "home" ? a.local : a.visitante)}</small>` : ""}</p>
-        <small class="sub">${esc(a.liga || "")} · ${hora(a.ts)}</small>
+        <small class="sub">${esc(ligaFS(a.liga).fase || "")}${ligaFS(a.liga).fase ? " · " : ""}${hora(a.ts)}</small>
         <p class="nota">Córners al avisar ${a.corners_local + a.corners_visitante} · línea más de ${n(a.linea, 1).replace(".", ",")}
-          · ${a.cuota ? `cuota <b>${n(a.cuota)}</b>${a.mercado_nombre ? ` (${esc(a.mercado_nombre)})` : ""}` : `sin cuota: ${esc(SIN[a.motivo_sin_cuota] || a.motivo_sin_cuota || "–")}`}
+          · ${a.cuota ? `cuota <b>${n(a.cuota)}</b>` : `sin cuota: ${esc(SIN[a.motivo_sin_cuota] || a.motivo_sin_cuota || "–")}`}
           ${a.corners_final != null ? ` · ahora/final ${a.corners_final}` : ""}${a.nota ? ` · ${esc(a.nota)}` : ""}</p>
       </div>`;
     return `<div class="tarjeta">
