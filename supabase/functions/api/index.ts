@@ -63,7 +63,7 @@ const EDITABLES = new Set([
   "escaneo_activo", "presupuesto_diario", "reserva_api", "intervalo_radar_min", "intervalo_seguimiento_min",
   "horas_activas_utc", "fraccion_radar", "max_detalle_escaneo", "stake", "cuotas_siempre", "excluir_reempate", "excluir_roja_fav", "goles_fav_max",
   // Córners (lab, DECISIONES 37)
-  "corners_activo", "corners_api_max_dia", ...CORNERS_REGLA,
+  "corners_activo", "corners_push", "corners_cuota", "corners_api_max_dia", ...CORNERS_REGLA,
 ]);
 // Claves que nunca salen por la API pública
 const OCULTAS = new Set(["token_forzar"]);
@@ -93,7 +93,7 @@ function validarValor(clave: string, v: unknown): boolean {
         .every((k) => typeof (v as any)[k] === "number" && Number.isFinite((v as any)[k]));
   }
   if (clave === "horas_activas_utc") return Array.isArray(v) && v.every((h) => Number.isInteger(h) && h >= 0 && h <= 23);
-  if (clave === "corners_activo") return typeof v === "boolean";
+  if (clave === "corners_activo" || clave === "corners_push" || clave === "corners_cuota") return typeof v === "boolean";
   if (clave === "escaneo_activo" || clave === "cuotas_siempre" || clave === "excluir_reempate" || clave === "excluir_roja_fav") return typeof v === "boolean";
   return typeof v === "number" && Number.isFinite(v) && v >= 0;
 }

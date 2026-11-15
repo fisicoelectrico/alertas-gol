@@ -547,10 +547,10 @@ Object.assign(pantallas, {
     const NOMBRE = { c1t_cero20: "1T · 0 córners al 20'", c2t_fav77: "2T · favorito perdiendo al 77'" };
     const RES = { acierto: "✅ Salió", fallo: "❌ No salió", pendiente: "⏳ En juego", anulada: "Anulada" };
     const SIN = { sin_pareja_api: "sin pareja en API", tope_diario: "tope diario de consultas", sin_presupuesto_api: "sin cupo de API",
-      sin_mercado: "la API no ofrecía córners", sin_mercado_de_ese_tiempo: "solo córners de otro tiempo", sin_esa_linea: "no estaba esa línea", error_api: "error de la API" };
+      sin_mercado: "la API no ofrecía córners", sin_mercado_de_ese_tiempo: "solo córners de otro tiempo", sin_esa_linea: "no estaba esa línea", error_api: "error de la API", cuota_apagada: "lectura de cuota apagada" };
     const pct = (a, b) => b ? `${Math.round(a / b * 100)}%` : "–";
     setTimeout(() => {
-      $("#btn-corners")?.addEventListener("click", async () => {
+      const guardarCk = async () => {
         const cambios = {};
         document.querySelectorAll("[data-ck]").forEach((i) => {
           const v = i.type === "checkbox" ? i.checked : Number(i.value);
@@ -559,7 +559,9 @@ Object.assign(pantallas, {
         if (!Object.keys(cambios).length) return toast("No hay cambios");
         const g = await conPin((pin) => post("/admin/config", { pin, cambios }));
         if (g) { toast(g.version_corners ? `Guardado: ahora es la versión ${g.version_corners}` : "Guardado"); navegar(); }
-      });
+      };
+      $("#btn-corners")?.addEventListener("click", guardarCk);
+      $("#btn-corners-sw")?.addEventListener("click", guardarCk);
     });
     const campo = (k, t, d) => `<div class="campo"><label for="ck-${k}">${t}<small>${d}</small></label>
       <input id="ck-${k}" type="number" step="1" inputmode="numeric" data-ck="${k}" value="${esc(P[k])}" style="max-width:80px"></div>`;
@@ -582,9 +584,13 @@ Object.assign(pantallas, {
           · ${a.cuota ? `cuota <b>${n(a.cuota)}</b>` : `sin cuota: ${esc(SIN[a.motivo_sin_cuota] || a.motivo_sin_cuota || "–")}`}
           ${a.corners_final != null ? ` · ahora/final ${a.corners_final}` : ""}${a.nota ? ` · ${esc(a.nota)}` : ""}</p>
       </div>`;
+    const sw = (k, t, d) => `<div class="campo"><label for="ck-${k}">${t}<small>${d}</small></label>
+          <label class="sw"><input id="ck-${k}" type="checkbox" data-ck="${k}" ${P[k] !== false ? "checked" : ""}><span></span></label></div>`;
     return `<div class="tarjeta">
-        <div class="campo"><label for="ck-corners_activo"><b>Córners (laboratorio)</b><small>Versión ${esc(P.corners_version || "c1")} · solo tú recibes estos avisos · consultas de API hoy ${r.consultas_hoy}/${esc(P.corners_api_max_dia)}</small></label>
-          <label class="sw"><input id="ck-corners_activo" type="checkbox" data-ck="corners_activo" ${P.corners_activo ? "checked" : ""}><span></span></label></div>
+        ${sw("corners_activo", "<b>Córners (laboratorio)</b>", `Versión ${esc(P.corners_version || "c1")} · detecta, guarda y resuelve el acierto con Flashscore (gratis)`)}
+        ${sw("corners_push", "Avisos al celular", "Apagado: sigue juntando datos en silencio")}
+        ${sw("corners_cuota", "Leer la cuota", `1 consulta de API por aviso · hoy ${r.consultas_hoy}/${esc(P.corners_api_max_dia)}. Apagado: 0 consultas`)}
+        <div class="botones"><button class="btn sec" id="btn-corners-sw">Guardar interruptores</button></div>
       </div>
       <div class="titulo-seccion"><h2>¿Está funcionando?</h2></div>
       ${resumen ? `<div class="tarjeta tabla-wrap"><table><thead><tr><th>Mercado</th><th>Avisos</th><th>Acierto</th><th title="Solo las que tuvieron cuota">Con cuota</th><th>Ganancia</th></tr></thead><tbody>${resumen}</tbody></table></div>
@@ -600,7 +606,7 @@ Object.assign(pantallas, {
         ${campo("corners_2t_min_hasta", "2T hasta el minuto", "")}
         ${campo("corners_objetivo", "Córners más que se buscan", "La línea es córners actuales + este número − 0,5")}
         ${campo("corners_api_max_dia", "Consultas de API por día", "Una por aviso, para leer la cuota")}
-        <p class="nota">Cambiar minutos u objetivo abre una versión nueva (c1 → c2) para no mezclar resultados. El tope de consultas y el interruptor no cambian la versión.</p>
+        <p class="nota">Cambiar minutos u objetivo abre una versión nueva (c1 → c2) para no mezclar resultados. El tope de consultas y los interruptores no cambian la versión.</p>
         <div class="botones"><button class="btn" id="btn-corners">Guardar</button></div>
       </div>`;
   },
