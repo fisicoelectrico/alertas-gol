@@ -11,6 +11,10 @@ const vista = $("#vista");
 // ---------- utilidades ----------
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const n = (v, d = 2) => (v === null || v === undefined || v === "" || isNaN(Number(v)) ? "–" : Number(v).toFixed(d));
+// País · liga para las tarjetas (API-Football escribe "Costa-Rica"; "World" no es un país)
+const ligaTxt = (pais, liga) => { const p = String(pais || "").replace(/-/g, " ").trim(); const l = String(liga || "").trim(); return !p || p.toLowerCase() === "world" ? (l || "Fútbol") : (l ? `${p} · ${l}` : p); };
+// Flashscore: "COSTA RICA: Liga de Ascenso - Apertura - Play Offs" → país · liga y la fase aparte
+const ligaFS = (t) => { t = String(t || ""); const i = t.indexOf(": "); const pais = i > 0 ? t.slice(0, i).toLowerCase().replace(/(^|[\s-])\p{L}/gu, (m) => m.toUpperCase()) : null; const [liga, ...fase] = (i > 0 ? t.slice(i + 2) : t).split(" - "); return { txt: ligaTxt(pais, liga), fase: fase.join(" · ") }; };
 const hora = (ts) => new Date(ts).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 const hace = (ts) => {
   const m = Math.round((Date.now() - new Date(ts)) / 60000);

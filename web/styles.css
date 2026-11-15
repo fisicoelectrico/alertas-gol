@@ -463,3 +463,6 @@ button.hfila { width: 100%; background: none; border: 0; border-bottom: 1px soli
 button.hfila:last-child { border-bottom: 0; }
 button.hfila:active { background: var(--panel-2); }
 .marcar-mas { color: var(--tenue); font-size: 18px; width: 26px; text-align: center; flex: none; }
+
+/* País · liga encima de cada alerta (15 nov): siempre visible, en verde */
+.liga-top { display: block; font-size: 12px; font-weight: 700; color: var(--cesped); letter-spacing: .03em; text-transform: uppercase; margin-bottom: 2px; }

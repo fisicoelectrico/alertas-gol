@@ -11,19 +11,20 @@
 //  4. Resultado:     si no hubo gol, "No hubo gol" al resolver. Si hubo y ya se avisó, no se repite.
 // =====================================================================
 import { sql, Config } from "./db.ts";
-import { cuotaTxt, Destinatario, notificar, pesos } from "./notificar.ts";
+import { cuotaTxt, Destinatario, ligaTxt, notificar, pesos } from "./notificar.ts";
 
 const favDe = (a: any): string =>
   a.favorito === "home" ? a.local : a.favorito === "away" ? a.visitante : a.local;
 
 export async function avisoAlerta(alertaId: number) {
-  const [a] = await sql`select a.id, a.minuto, a.cuota, a.marcador, p.local, p.visitante, p.favorito
-                        from futbol.alertas a join futbol.partidos p using (fixture_id) where a.id = ${alertaId}`;
+  const [a] = await sql`select a.id, a.minuto, a.cuota, a.marcador, p.local, p.visitante, p.favorito, l.nombre as liga, l.pais
+                        from futbol.alertas a join futbol.partidos p using (fixture_id) left join futbol.ligas l on l.id = p.liga_id
+                        where a.id = ${alertaId}`;
   if (!a) return 0;
   const [gl, gv] = String(a.marcador ?? "").split("-");
   return await notificar({
-    titulo: "Nueva alerta · EN VIVO",
-    cuerpo: `${a.local} ${gl ?? "?"}–${gv ?? "?"} ${a.visitante}, minuto ${a.minuto}. ${favDe(a)} es favorito, va perdiendo y ataca mucho. Otro gol paga ${cuotaTxt(a.cuota)}.`,
+    titulo: ligaTxt(a.pais, a.liga),
+    cuerpo: `Alerta en vivo: ${a.local} ${gl ?? "?"}–${gv ?? "?"} ${a.visitante}, minuto ${a.minuto}. ${favDe(a)} es favorito, va perdiendo y ataca mucho. Otro gol paga ${cuotaTxt(a.cuota)}.`,
     url: "./#ahora", tag: `alerta-${a.id}`, alerta_id: a.id, acciones: true,
   }, { alertaId: a.id });
 }
@@ -38,7 +39,7 @@ function textoGanancia(d: Destinatario, cuotaAlerta: number) {
 async function enviarGol(a: any, minuto: number | null, equipo: string, gl: number, gv: number) {
   return await notificar((d) => ({
     titulo: `¡Gooooool de ${equipo}${minuto ? ` al ${minuto}'` : ""}!`,
-    cuerpo: `${a.local} ${gl}–${gv} ${a.visitante}.${textoGanancia(d, Number(a.cuota))}`,
+    cuerpo: `${ligaTxt(a.pais, a.liga)}: ${a.local} ${gl}–${gv} ${a.visitante}.${textoGanancia(d, Number(a.cuota))}`,
     url: "./#historial", tag: `alerta-${a.id}`, alerta_id: a.id,
   }), { alertaId: a.id });
 }
@@ -48,7 +49,7 @@ export async function avisosEnVivo(cfg: Config, log: (s: string) => void) {
   // ---- Gol: el marcador ya tiene más goles que al alertar ----
   const conGol = await sql`
     select a.id, a.fixture_id, a.ts, a.cuota, a.goles_al_alertar, p.local, p.visitante, p.favorito,
-           p.goles_local as gl, p.goles_visitante as gv
+           p.goles_local as gl, p.goles_visitante as gv, l.nombre as liga, l.pais
     from futbol.alertas a join futbol.partidos p using (fixture_id) left join futbol.ligas l on l.id = p.liga_id
     where a.resultado = 'pendiente' and a.gol_avisado is null and coalesce(l.habilitada, true)
       and p.goles_local + p.goles_visitante > a.goles_al_alertar and a.ts > now() - interval '4 hours'`;
@@ -70,7 +71,7 @@ export async function avisosEnVivo(cfg: Config, log: (s: string) => void) {
   const tope = Number(cfg.recordatorio_minuto_tope ?? 85);
   if (!max) return;
   const abiertas = await sql`
-    select a.id, a.cuota, a.recordatorios, p.local, p.visitante, p.favorito, p.minuto,
+    select a.id, a.cuota, a.recordatorios, p.local, p.visitante, p.favorito, p.minuto, l.nombre as liga, l.pais,
            p.goles_local as gl, p.goles_visitante as gv,
            (select s.cuota_over from futbol.snapshots s where s.fixture_id = a.fixture_id and s.ts > a.ts and s.cuota_over is not null
              order by s.ts desc limit 1) as cuota_actual,
@@ -88,8 +89,8 @@ export async function avisosEnVivo(cfg: Config, log: (s: string) => void) {
     if (!ok.length) continue;
     const ataca = Number(a.dominancia) >= Number(cfg.dominancia_min ?? 1.3);
     const n = await notificar({
-      titulo: `Sigue abierta · minuto ${a.minuto ?? "–"}`,
-      cuerpo: `${a.local} ${a.gl}–${a.gv} ${a.visitante}.${ataca ? ` ${favDe(a)} sigue atacando.` : ""} Otro gol paga ${cuotaTxt(a.cuota_actual ?? a.cuota)}. (Recordatorio ${n0 + 1} de ${max})`,
+      titulo: ligaTxt(a.pais, a.liga),
+      cuerpo: `Sigue abierta, minuto ${a.minuto ?? "–"}: ${a.local} ${a.gl}–${a.gv} ${a.visitante}.${ataca ? ` ${favDe(a)} sigue atacando.` : ""} Otro gol paga ${cuotaTxt(a.cuota_actual ?? a.cuota)}. (Recordatorio ${n0 + 1} de ${max})`,
       url: "./#ahora", tag: `alerta-${a.id}`, alerta_id: a.id, acciones: true,
     }, { alertaId: a.id, omitirMarcados: true });
     log(`recordatorio ${n0 + 1}/${max} alerta ${a.id} push=${n}`);
@@ -102,7 +103,9 @@ export async function avisoResultado(
   r: { resultado: "acierto" | "fallo"; minuto_gol: number | null; lado_gol: "favorito" | "rival" | null; gl90: number; gv90: number },
   local: string, visitante: string, favorito: string | null,
 ) {
-  const base = { id: a.id, cuota: a.cuota, local, visitante, favorito };
+  const [lg] = await sql`select l.nombre as liga, l.pais from futbol.alertas x join futbol.partidos p using (fixture_id)
+                         left join futbol.ligas l on l.id = p.liga_id where x.id = ${a.id}`;
+  const base = { id: a.id, cuota: a.cuota, local, visitante, favorito, liga: lg?.liga ?? null, pais: lg?.pais ?? null };
   if (r.resultado === "acierto") {
     if (a.gol_avisado) return 0;    // ya se avisó el gol en vivo: no se repite
     await sql`update futbol.alertas set gol_avisado = now() where id = ${a.id} and gol_avisado is null`;
@@ -113,8 +116,8 @@ export async function avisoResultado(
     const c = d.cuota ?? Number(a.cuota);
     const mio = d.decision !== "entre" ? "" : d.monto ? ` Esta vez no salió: −${pesos(d.monto)}.` : " Esta vez no salió.";
     return {
-      titulo: "No hubo gol",
-      cuerpo: `${local} ${r.gl90}–${r.gv90} ${visitante} terminó sin otro gol (cuota ${cuotaTxt(c)}).${mio}`,
+      titulo: ligaTxt(base.pais, base.liga),
+      cuerpo: `No hubo gol: ${local} ${r.gl90}–${r.gv90} ${visitante} terminó sin otro gol (cuota ${cuotaTxt(c)}).${mio}`,
       url: "./#historial", tag: `alerta-${a.id}`, alerta_id: a.id,
     };
   }, { alertaId: a.id });

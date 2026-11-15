@@ -66,3 +66,21 @@ export const notificarTodos = (mensaje: Mensaje) => notificar(mensaje);
 // ---------- Textos (formato colombiano) ----------
 export const pesos = (v: number) => `$${Math.round(Math.abs(v)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".")}`;
 export const cuotaTxt = (c: unknown) => Number(c).toFixed(2).replace(".", ",");
+
+// ---------- País y liga en cada aviso (Fredy, 15 nov: sin la liga el partido queda "perdido") ----------
+// API-Football escribe el país con guiones ("Costa-Rica"); Flashscore en mayúsculas y con la fase pegada
+// ("COSTA RICA: Liga de Ascenso - Apertura - Play Offs"). Las dos terminan como "Costa Rica · Liga de Ascenso".
+const titulo = (t: string) => t.toLowerCase().replace(/(^|[\s-])\p{L}/gu, (m) => m.toUpperCase());
+export function ligaTxt(pais: string | null | undefined, liga: string | null | undefined): string {
+  const p = (pais ?? "").replace(/-/g, " ").trim();
+  const l = (liga ?? "").trim();
+  if (!p || p.toLowerCase() === "world") return l || "Fútbol";
+  return l ? `${p} · ${l}` : p;
+}
+export function ligaFS(texto: string | null | undefined): { pais: string | null; liga: string; fase: string | null; txt: string } {
+  const t = String(texto ?? "");
+  const [pais, resto] = t.includes(": ") ? [t.slice(0, t.indexOf(": ")), t.slice(t.indexOf(": ") + 2)] : [null, t];
+  const [liga, ...fase] = resto.split(" - ");
+  const p = pais ? titulo(pais) : null;
+  return { pais: p, liga: liga.trim(), fase: fase.length ? fase.join(" · ") : null, txt: ligaTxt(p, liga.trim()) };
+}
