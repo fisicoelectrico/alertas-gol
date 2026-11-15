@@ -166,11 +166,14 @@ function mostrarTutorial() {
 
 // ---------- Registrar entrada (hoja con monto opcional) ----------
 function hojaEntrada(x) {
-  const cuotaBase = Number(x.cuota_actual ?? x.cuota);
+  const cerrada = x.resultado !== "pendiente";
+  // Abierta: la cuota de ahora. Cerrada: la de la alerta (la que se sugirió en su momento).
+  const cuotaBase = Number(cerrada ? x.cuota : (x.cuota_actual ?? x.cuota));
   const capa = document.createElement("div");
   capa.className = "hoja-fondo";
   capa.innerHTML = `<div class="hoja" role="dialog" aria-modal="true" aria-labelledby="hoja-t">
-      <h2 id="hoja-t">¿Con cuánto entraste? <small>(opcional)</small></h2>
+      <h2 id="hoja-t">${cerrada ? "Marcar que entraste" : "¿Con cuánto entraste?"} <small>(monto opcional)</small></h2>
+      ${cerrada ? `<p class="nota" style="margin:0">Este partido ya terminó (${x.resultado === "acierto" ? "hubo gol" : "no hubo gol"}). Queda registrado como marcado después.</p>` : ""}
       <p class="nota">${esc(x.local)} ${esc(x.marcador?.replace("-", "–"))} ${esc(x.visitante)} · otro gol a ${coma(cuotaBase)}</p>
       <label class="campo-vert">Monto en pesos<input id="h-monto" type="text" inputmode="numeric" placeholder="$0" value="${x.mi_monto ? Number(x.mi_monto) : ""}"></label>
       <div class="chips-monto">${[10000, 20000, 50000, 100000].map((v) => `<button type="button" class="filtro" data-v="${v}">${v / 1000} mil</button>`).join("")}</div>
@@ -178,6 +181,7 @@ function hojaEntrada(x) {
       <label class="campo-vert">¿Te la pagaron distinto? Cuota que tomaste<input id="h-cuota" type="text" inputmode="decimal" value="${coma(x.mi_cuota ?? cuotaBase)}"></label>
       <button class="btn grande" id="h-guardar">Guardar entrada</button>
       <button class="btn sec" id="h-sin">Marcar sin monto (solo cuenta para el yield)</button>
+      ${x.mi_decision ? `<button class="btn-texto neg" id="h-quitar">Quitar mi marca</button>` : ""}
       <button class="btn-texto" id="h-cerrar">Cancelar</button>
     </div>`;
   document.body.appendChild(capa);
@@ -203,13 +207,17 @@ function hojaEntrada(x) {
     const c = cuota();
     try {
       await post("/entradas", { alerta_id: x.id, decision: "entre", monto: conMonto && monto() ? monto() : null,
-                                cuota: Math.abs(c - cuotaBase) > 0.001 ? c : null });
+                                cuota: Math.abs(c - Number(x.cuota)) > 0.001 ? c : null });
       cerrar(); toast("Listo, quedó marcada tu entrada"); navegar(true);
     } catch (e) { toast(e.message); }
   };
   capa.querySelector("#h-guardar").addEventListener("click", () => enviar(true));
   capa.querySelector("#h-sin").addEventListener("click", () => enviar(false));
   capa.querySelector("#h-cerrar").addEventListener("click", cerrar);
+  capa.querySelector("#h-quitar")?.addEventListener("click", async () => {
+    try { await post("/entradas", { alerta_id: x.id, decision: "borrar" }); cerrar(); toast("Marca quitada"); navegar(true); }
+    catch (e) { toast(e.message); }
+  });
   capa.addEventListener("click", (e) => { if (e.target === capa) cerrar(); });
   if (x.mi_monto) capa.querySelector("#h-monto").value = pesos(Number(x.mi_monto));
   calc();
@@ -306,16 +314,22 @@ Object.assign(pantallas, {
     const cerradas = todasCerradas.filter((a) => a.en_ventana);
     const fuera = todasCerradas.length - cerradas.length;
     const vis = filtro === "mias" ? cerradas.filter((a) => a.mi_decision === "entre") : cerradas;
-    setTimeout(() => document.querySelectorAll(".filtro[data-h]").forEach((b) => b.addEventListener("click", () => {
-      try { localStorage.setItem("filtroHist", b.dataset.h); } catch (_) {}
-      navegar(true);
-    })));
+    setTimeout(() => {
+      document.querySelectorAll(".filtro[data-h]").forEach((b) => b.addEventListener("click", () => {
+        try { localStorage.setItem("filtroHist", b.dataset.h); } catch (_) {}
+        navegar(true);
+      }));
+      // Tocar un partido del historial: marcar (o corregir) que sí entré
+      const porId = new Map(cerradas.map((a) => [String(a.id), a]));
+      document.querySelectorAll("[data-hist]").forEach((b) => b.addEventListener("click", () => hojaEntrada(porId.get(b.dataset.hist))));
+    });
     const fila = (a) => {
       const ok = a.resultado === "acierto";
-      return `<div class="hfila"><span class="marca-res ${ok ? "pos" : "neg"}">${ok ? "✓" : "✕"}</span>
+      const tag = YO ? `button type="button" class="hfila tocable" data-hist="${a.id}" aria-label="Marcar entrada en ${esc(a.local)} contra ${esc(a.visitante)}"` : `div class="hfila"`;
+      return `<${tag}><span class="marca-res ${ok ? "pos" : "neg"}">${ok ? "✓" : "✕"}</span>
         <div class="hcuerpo"><b>${esc(a.local)} ${a.goles_local_90 ?? a.goles_local}–${a.goles_visitante_90 ?? a.goles_visitante} ${esc(a.visitante)}</b>
           <small>Alerta al ${a.minuto}' · ${coma(a.cuota)} · ${ok ? `gol al ${a.minuto_gol ?? "?"}'` : "no hubo gol"} · ${hora(a.ts)}</small></div>
-        ${a.mi_decision === "entre" ? `<span class="chip entraste">ENTRASTE</span>` : ""}</div>`;
+        ${a.mi_decision === "entre" ? `<span class="chip entraste">ENTRASTE${a.mi_tardia ? "*" : ""}</span>` : YO ? `<span class="marcar-mas" aria-hidden="true">＋</span>` : ""}</${YO ? "button" : "div"}>`;
     };
     const signo = m.yield == null ? "" : m.yield >= 0 ? "ganando" : "perdiendo";
     return `<div class="tarjeta resumen-hist">
@@ -326,6 +340,7 @@ Object.assign(pantallas, {
       ${m.yield != null ? `<p class="nota explica">Por cada $100 entrados en todas, el radar va ${signo} $${coma(Math.abs(m.yield), 2)}.</p>` : ""}
       ${YO ? `<div class="filtros"><button class="filtro ${filtro === "todas" ? "on" : ""}" data-h="todas">Todas</button><button class="filtro ${filtro === "mias" ? "on" : ""}" data-h="mias">Donde entré</button></div>` : ""}
       <div class="tarjeta lista-hist">${vis.map(fila).join("") || `<p class="vacio">${filtro === "mias" ? "Todavía no has marcado entradas cerradas." : "Todavía no hay alertas cerradas."}</p>`}</div>
+      ${YO ? `<p class="nota">¿Entraste y no lo marcaste? Toca el partido. Las que marcas después salen con asterisco (ENTRASTE*).</p>` : ""}
       ${fuera && esAdmin() ? `<p class="nota">${fuera} alerta${fuera === 1 ? "" : "s"} fuera de la ventana de minutos no se muestra${fuera === 1 ? "" : "n"} ni cuenta${fuera === 1 ? "" : "n"}. Están en Control → Alertas técnicas.</p>` : ""}`;
   },
 
@@ -459,7 +474,7 @@ Object.assign(pantallas, {
       });
     });
     const estado = (u) => !u.activo ? "Acceso apagado"
-      : u.sesiones ? `Entró en ${u.entradas} · yield ${pct(u.yield_pct == null ? null : Number(u.yield_pct))} · ${u.ultimo_acceso ? hace(u.ultimo_acceso) : "sin uso"}${u.avisos ? "" : " · sin avisos"}`
+      : u.sesiones ? `Entró en ${u.entradas}${u.tardias ? ` (${u.tardias} marcadas después)` : ""} · yield ${pct(u.yield_pct == null ? null : Number(u.yield_pct))} · ${u.ultimo_acceso ? hace(u.ultimo_acceso) : "sin uso"}${u.avisos ? "" : " · sin avisos"}`
       : u.enlace_vence ? "Enlace enviado, todavía no entra" : "Sin enlace";
     const fila = (u) => `<div class="amigo ${u.activo ? "" : "apagado"}">
         <span class="inicial">${esc(u.nombre[0] || "?")}</span>

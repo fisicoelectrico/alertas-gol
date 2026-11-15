@@ -196,6 +196,7 @@ async function alertas(yo: Sesion | null) {
     select a.*, p.local, p.visitante, p.favorito, p.goles_local_90, p.goles_visitante_90, l.nombre as liga, l.pais,
            p.estado, p.minuto as minuto_actual, p.goles_local, p.goles_visitante,
            e.decision as mi_decision, e.monto as mi_monto, e.cuota as mi_cuota,
+           (e.ts > coalesce(a.gol_avisado, a.cerrada_ts, 'infinity'::timestamptz)) as mi_tardia,
            (select count(*)::int from futbol.entradas x where x.alerta_id = a.id and x.decision = 'entre') as entraron,
            (select s.cuota_over from futbol.snapshots s where s.fixture_id = a.fixture_id and s.ts > a.ts and s.cuota_over is not null
              order by s.ts desc limit 1) as cuota_actual,
@@ -260,8 +261,10 @@ async function marcarEntrada(yo: Sesion, b: any) {
   if (!Number.isInteger(alertaId) || !["entre", "no_entro", "borrar"].includes(decision)) return { error: "datos inválidos" };
   const [a] = await sql`select resultado, gol_avisado from futbol.alertas where id = ${alertaId}`;
   if (!a) return { error: "esa alerta no existe" };
-  // Poka-yoke: solo se marca mientras la alerta está abierta y antes del gol. Así nadie "entra" sabiendo el resultado.
-  if (a.resultado !== "pendiente" || a.gol_avisado) return { error: "Esta alerta ya se cerró; solo se puede marcar mientras sigue abierta." };
+  // Fredy (14 nov): también se puede marcar después (si entró y no alcanzó a tocar el botón). Queda a la
+  // vista: una entrada marcada después del gol o del final sale como "marcada después" (mi_tardia y, para
+  // el admin, la columna tardias en Amigos). Las anuladas no cuentan, así que no se marcan.
+  if (a.resultado === "anulada") return { error: "Esta alerta se anuló (el partido no se jugó completo)." };
   if (decision === "borrar") {
     await sql`delete from futbol.entradas where usuario_id = ${yo.usuario_id} and alerta_id = ${alertaId}`;
     return { ok: true };
@@ -291,7 +294,10 @@ async function listarUsuarios() {
            (select max(i.vence) from futbol.invitaciones i where i.usuario_id = u.id and i.usada is null and i.vence > now()) as enlace_vence,
            (select count(*)::int from futbol.push_suscripciones p where p.usuario_id = u.id and p.activa) as avisos,
            y.cerradas, y.aciertos, y.yield_pct,
-           (select count(*)::int from futbol.entradas e where e.usuario_id = u.id and e.decision = 'entre') as entradas
+           (select count(*)::int from futbol.entradas e where e.usuario_id = u.id and e.decision = 'entre') as entradas,
+           (select count(*)::int from futbol.entradas e join futbol.alertas a on a.id = e.alerta_id
+             where e.usuario_id = u.id and e.decision = 'entre'
+               and e.ts > coalesce(a.gol_avisado, a.cerrada_ts, 'infinity'::timestamptz)) as tardias
     from futbol.usuarios u left join futbol.v_yield_usuario y on y.usuario_id = u.id
     order by u.activo desc, u.rol, u.nombre`;
 }
