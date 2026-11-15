@@ -44,6 +44,7 @@ import * as A from "../_shared/algoritmo.ts";
 import { notificar } from "../_shared/notificar.ts";
 import { avisoAlerta, avisoResultado, avisosEnVivo } from "../_shared/avisos.ts";
 import * as FS from "../_shared/flashscore.ts";
+import { cicloCorners } from "../_shared/corners.ts";
 
 const json = (d: unknown, status = 200) =>
   new Response(JSON.stringify(d, null, 2), { status, headers: { "Content-Type": "application/json" } });
@@ -847,6 +848,10 @@ Deno.serve(async (req) => {
         log(`favorito ${f.fixture.id} (fs, ${c.casas.length} casas): ${fav ?? "sin cuotas"}`);
       }
       await cargarInfo(idsVivosFS);
+
+      // 5b. Mercado experimental de córners, solo admin (DECISIONES 37). Aislado: si falla, el radar de goles sigue.
+      try { await cicloCorners({ cfg, vivosFS, conocidos, api, log }); }
+      catch (e) { log(`córners: ${(e as Error).message}`); }
 
       // 6. Candidatos y detalle: estadísticas de Flashscore (gratis); cuota en vivo con API-Football
       const filtradosFS = enVivo.filter(esCandidato);
