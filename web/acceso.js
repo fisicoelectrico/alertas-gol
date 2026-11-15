@@ -235,7 +235,19 @@ function tarjetaAbierta(x) {
         <button class="btn-texto" data-cambiar="${x.id}">Cambiar</button></div>`
     : x.mi_decision === "no_entro" ? `<div class="marcada"><span>No entraste en este</span><button class="btn-texto" data-cambiar="${x.id}">Cambiar</button></div>`
     : `<p class="pregunta">¿Entraste?</p><div class="dos"><button class="btn grande" data-entre="${x.id}">Sí, entré</button><button class="btn sec grande" data-no="${x.id}">No</button></div>`;
-  const tecnico = esAdmin() ? `<div class="tecnico"><span>D ${coma(x.dominancia)}</span><span>M ${coma(x.momentum)}</span><span>Over ${esc(x.linea_over)}</span><span>Entraron ${x.entraron}</span><span>Push ${x.push_enviados ?? 0}</span></div>` : "";
+  // Franja técnica (solo admin). Etiquetas completas, nunca letras sueltas (poka-yoke: "D" se confundía con cuota).
+  //  · Dominancia = IP favorito ÷ IP rival con las estadísticas acumuladas del partido.
+  //  · Momentum   = la misma razón, pero solo con lo ocurrido en los últimos ~15 min (delta entre snapshots).
+  //  Ambas son razones (veces), no cuotas: 1,30 significa que el favorito presiona un 30 % más que el rival.
+  const dato = (nombre, valor, ayuda) => `<span title="${ayuda}"><small>${nombre}</small> <b>${valor}</b></span>`;
+  const tecnico = esAdmin() ? `<div class="tecnico">
+      ${dato("Dominancia", `${coma(x.dominancia)}×`, "Presión del favorito ÷ presión del rival en todo el partido")}
+      ${dato("Momentum 15′", `${coma(x.momentum)}×`, "Presión del favorito ÷ presión del rival solo en los últimos ~15 minutos")}
+      ${dato("Línea", `Over ${esc(x.linea_over)}`, "Mercado de la entrada sugerida: goles actuales + 0,5")}
+      ${dato("Entraron", x.entraron, "Personas que marcaron Sí, entré")}
+      ${dato("Push enviados", x.push_enviados ?? 0, "Notificaciones push entregadas")}
+      <p class="tecnico-ayuda">Dominancia y momentum son razones de presión favorito ÷ rival (no son cuotas). 1,30× = el favorito ataca 30 % más.</p>
+    </div>` : "";
   return `<article class="tarjeta abierta ${gol ? "con-gol" : ""}">
       <div class="liga-top">${esc(ligaTxt(x.pais, x.liga))}</div>
       <div class="fila"><span class="vivo">${gol ? "¡GOL! · esperando el final" : enJuego ? `EN VIVO · ${x.minuto_actual ?? x.minuto}'` : esc(ESTADOS[x.estado] || x.estado || "")}</span></div>
