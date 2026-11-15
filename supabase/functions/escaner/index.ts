@@ -719,7 +719,11 @@ Deno.serve(async (req) => {
       if (nuevos.length) {
         const desde = new Date(Math.min(...nuevos.map((p) => p.inicio)) - 20 * 60000).toISOString();
         const hasta = new Date(Math.max(...nuevos.map((p) => p.inicio)) + 20 * 60000).toISOString();
-        const ag = (await sql`select fixture_id, local, visitante, kickoff from futbol.agenda where kickoff between ${desde} and ${hasta}`)
+        // Un fixture que ya quedó emparejado con otro partido de Flashscore no se vuelve a ofrecer:
+        // dos fs_id con el mismo fixture_id rompían el guardado de todo el ciclo (15 nov 2026).
+        const ag = (await sql`select a.fixture_id, a.local, a.visitante, a.kickoff from futbol.agenda a
+                              where a.kickoff between ${desde} and ${hasta}
+                                and not exists (select 1 from futbol.fs_partidos f where f.fixture_id = a.fixture_id)`)
           .map((r: any) => ({ fixture_id: r.fixture_id, local: r.local, visitante: r.visitante, kickoff: new Date(r.kickoff).getTime() }));
         const mapa = FS.emparejar(nuevos, ag);
         for (const p of nuevos) {
@@ -754,8 +758,21 @@ Deno.serve(async (req) => {
           goals: { home: p.gl, away: p.gv },
         };
       };
-      const enVivo = vivosFS.filter((p) => p.estado === 2 && conocidos.get(p.id)?.fixture_id && agendaInfo.has(conocidos.get(p.id).fixture_id))
-        .map((p) => comoApi(p, conocidos.get(p.id).fixture_id));
+      // Poka-yoke: si por cualquier razón dos partidos de Flashscore apuntan al mismo fixture, se queda
+      // el de mejor parecido de nombres y se avisa. Un duplicado tumbaba el ciclo entero con
+      // "ON CONFLICT DO UPDATE command cannot affect row a second time".
+      const elegido = new Map<number, FS.PartidoFS>();
+      for (const p of vivosFS) {
+        const c = conocidos.get(p.id);
+        if (p.estado !== 2 || !c?.fixture_id || !agendaInfo.has(c.fixture_id)) continue;
+        const otro = elegido.get(c.fixture_id);
+        if (otro) {
+          log(`fs: fixture ${c.fixture_id} repetido (${otro.local}-${otro.visitante} / ${p.local}-${p.visitante}); se usa el más parecido`);
+          if (Number(conocidos.get(otro.id)?.puntaje ?? 0) >= Number(c.puntaje ?? 0)) continue;
+        }
+        elegido.set(c.fixture_id, p);
+      }
+      const enVivo = [...elegido.entries()].map(([fid, p]) => comoApi(p, fid));
       lista = enVivo;
       const porIdFS = new Map<number, any>(enVivo.map((f) => [f.fixture.id, f]));
       const idsVivosFS = [...porIdFS.keys()];

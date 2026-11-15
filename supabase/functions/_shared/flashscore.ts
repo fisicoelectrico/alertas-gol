@@ -231,12 +231,22 @@ export function fichas(nombre: string): string[] {
   return nombre.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
     .replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w && !RELLENO.has(w));
 }
-function parecido(a: string, b: string): number {
+// Marcas de categoría ("W", "U17", "B", "II"…). Cuentan para el puntaje, pero por sí solas no prueban
+// nada: "Glasgow City W" y "Eskilstuna Utd W" daban 0,5 solo por la "W" y se cruzaban dos partidos
+// femeninos distintos que empezaban a la misma hora (falla del 15 nov 2026).
+const CATEGORIA = /^(w|women|femenino|fem|u\d{2}|ii|b|reserves?|reserva)$/;
+function comunes(a: string, b: string): { comun: number; reales: number; total: number } {
   const A = fichas(a), B = fichas(b);
-  if (!A.length || !B.length) return 0;
-  let comun = 0;
-  for (const x of A) if (B.some((y) => y === x || (x.length >= 4 && y.length >= 4 && (y.startsWith(x) || x.startsWith(y))))) comun++;
-  return comun / Math.max(A.length, B.length);
+  let comun = 0, reales = 0;
+  for (const x of A) if (B.some((y) => y === x || (x.length >= 4 && y.length >= 4 && (y.startsWith(x) || x.startsWith(y))))) {
+    comun++;
+    if (!CATEGORIA.test(x)) reales++;
+  }
+  return { comun, reales, total: Math.max(A.length, B.length) };
+}
+function parecido(a: string, b: string): number {
+  const c = comunes(a, b);
+  return c.total ? c.comun / c.total : 0;
 }
 // Marcas de categoría: si una tiene "U21"/"W"/"II" y la otra no, NO son el mismo partido.
 function categoria(n: string): string {
@@ -256,6 +266,8 @@ export function emparejar(fs: PartidoFS[], api: FixtureApi[]): Map<string, { fix
     for (const a of api) {
       if (Math.abs(a.kickoff - f.inicio) > 20 * 60000) continue;
       if (categoria(f.local) !== categoria(a.local) || categoria(f.visitante) !== categoria(a.visitante)) continue;
+      // Al menos un equipo debe compartir una palabra de verdad (no solo la "W" o el "U17")
+      if (!comunes(f.local, a.local).reales && !comunes(f.visitante, a.visitante).reales) continue;
       const pl = parecido(f.local, a.local), pv = parecido(f.visitante, a.visitante);
       const p = Math.min(pl, pv) * 0.6 + ((pl + pv) / 2) * 0.4;
       if (p >= 0.5) candidatos.push({ fs: f.id, api: a.fixture_id, p });
