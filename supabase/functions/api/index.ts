@@ -52,11 +52,15 @@ const json = (d: unknown, status = 200) =>
   new Response(JSON.stringify(d), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
 // Parámetros que se pueden cambiar desde la PWA (lista blanca)
+// Parámetros que definen la versión de córners: cambiar uno sube corners_version (c1 → c2…)
+const CORNERS_REGLA = ["corners_1t_min_desde", "corners_1t_min_hasta", "corners_2t_min_desde", "corners_2t_min_hasta", "corners_objetivo"];
 const EDITABLES = new Set([
   "minuto_min", "minuto_max", "cuota_fav_max", "diferencia_min", "dominancia_min", "cuota_objetivo",
   "momentum_ventana_min", "momentum_gap_min", "pesos_ip",
   "escaneo_activo", "presupuesto_diario", "reserva_api", "intervalo_radar_min", "intervalo_seguimiento_min",
   "horas_activas_utc", "fraccion_radar", "max_detalle_escaneo", "stake", "cuotas_siempre", "excluir_reempate", "excluir_roja_fav", "goles_fav_max",
+  // Córners (lab, DECISIONES 37)
+  "corners_activo", "corners_api_max_dia", ...CORNERS_REGLA,
 ]);
 // Claves que nunca salen por la API pública
 const OCULTAS = new Set(["token_forzar"]);
@@ -86,6 +90,7 @@ function validarValor(clave: string, v: unknown): boolean {
         .every((k) => typeof (v as any)[k] === "number" && Number.isFinite((v as any)[k]));
   }
   if (clave === "horas_activas_utc") return Array.isArray(v) && v.every((h) => Number.isInteger(h) && h >= 0 && h <= 23);
+  if (clave === "corners_activo") return typeof v === "boolean";
   if (clave === "escaneo_activo" || clave === "cuotas_siempre" || clave === "excluir_reempate" || clave === "excluir_roja_fav") return typeof v === "boolean";
   return typeof v === "number" && Number.isFinite(v) && v >= 0;
 }
@@ -431,6 +436,40 @@ async function ligas() {
     group by l.id order by alertas_resueltas desc, partidos desc, l.nombre limit 500`;
 }
 
+// ---------- Córners (lab, DECISIONES 37): solo administradores, por POST /admin/corners ----------
+// Acierto por mercado y versión. La implícita se promedia SOLO sobre las que tuvieron cuota; el % de las
+// que no la tuvieron mide el patrón, no la rentabilidad.
+async function cornersLab() {
+  const params = Object.fromEntries((await sql`select clave, valor from futbol.config where clave like 'corners%'`)
+    .map((r: any) => [r.clave, r.valor]));
+  const alertas = await sql`
+    select id, mercado, version, fixture_id, liga, local, visitante, favorito, ts, minuto, goles_local, goles_visitante,
+           corners_local, corners_visitante, linea, objetivo, api_consultada, hay_mercado, cuota, mercado_nombre,
+           motivo_sin_cuota, mercados_vistos, resultado, corners_final, minuto_cierre, cerrada_ts, nota
+    from futbol.alertas_corners order by ts desc limit 200`;
+  const resumen = await sql`
+    select mercado, version,
+           count(*)::int as avisos,
+           count(*) filter (where resultado = 'acierto')::int as aciertos,
+           count(*) filter (where resultado = 'fallo')::int as fallos,
+           count(*) filter (where resultado = 'pendiente')::int as pendientes,
+           count(*) filter (where cuota is not null)::int as con_cuota,
+           count(*) filter (where cuota is not null and resultado = 'acierto')::int as aciertos_con_cuota,
+           count(*) filter (where cuota is not null and resultado in ('acierto', 'fallo'))::int as resueltas_con_cuota,
+           round(avg(100 / cuota) filter (where cuota is not null and resultado in ('acierto', 'fallo')), 1) as implicita_pct,
+           round(sum(case when resultado = 'acierto' then cuota - 1 when resultado = 'fallo' then -1 end)
+                 filter (where cuota is not null), 2) as ganancia_u,
+           count(*) filter (where api_consultada and hay_mercado is false)::int as sin_mercado
+    from futbol.alertas_corners group by 1, 2 order by 2 desc, 1`;
+  const base = await sql`
+    select mercado, count(*)::int as revisados, count(*) filter (where alerto)::int as avisaron,
+           count(*) filter (where motivo = 'sin_stats' or motivo = 'sin_fila_corners')::int as sin_datos
+    from futbol.corners_chequeos group by 1`;
+  const [hoy] = await sql`select count(*) filter (where api_consultada)::int as consultas_hoy from futbol.alertas_corners
+                          where ts >= date_trunc('day', now() at time zone 'utc') at time zone 'utc'`;
+  return { params, alertas, resumen, base, consultas_hoy: hoy.consultas_hoy };
+}
+
 async function config() {
   const params = (await sql`select clave, valor, descripcion, es_regla, actualizado from futbol.config order by es_regla desc, clave`)
     .filter((p: any) => !OCULTAS.has(p.clave));
@@ -459,6 +498,13 @@ async function cambiarConfig(cambios: Record<string, unknown>, nota?: string) {
     for (const [k, v] of aplicar) {
       await tx`update futbol.config set valor = ${tx.json(v as any)}, actualizado = now() where clave = ${k}`;
     }
+    // Córners (lab): versión propia, separada de la del radar de goles
+    let versionCorners: string | null = null;
+    if (aplicar.some(([k]) => CORNERS_REGLA.includes(k))) {
+      const n = parseInt(String((mapa.get("corners_version") as any)?.valor ?? "c1").replace(/^c/, ""), 10) || 1;
+      versionCorners = `c${n + 1}`;
+      await tx`update futbol.config set valor = ${tx.json(versionCorners)}, actualizado = now() where clave = 'corners_version'`;
+    }
     const tocaRegla = aplicar.some(([k]) => mapa.get(k)?.es_regla);
     let version: string | null = null;
     if (tocaRegla) {
@@ -470,7 +516,7 @@ async function cambiarConfig(cambios: Record<string, unknown>, nota?: string) {
                select ${version}, jsonb_object_agg(clave, valor), ${nota ?? null} from futbol.config where es_regla`;
       await tx`update futbol.config set valor = ${tx.json(version)}, actualizado = now() where clave = 'regla_version'`;
     }
-    return { ok: true, cambiados: aplicar.map(([k]) => k), nueva_version: version };
+    return { ok: true, cambiados: aplicar.map(([k]) => k), nueva_version: version, version_corners: versionCorners };
   });
 }
 
@@ -586,6 +632,7 @@ Deno.serve(async (req) => {
         if (!body.habilitada) await sql`update futbol.partidos set seguimiento = false where seguimiento and liga_id = ${Number(body.id)}`;
         return json({ ok: true });
       }
+      if (ruta === "/admin/corners") return json(await cornersLab());
       if (ruta === "/admin/push-prueba") {
         const n = await notificar({ titulo: "🔔 Prueba de ADN Soccer", cuerpo: "Si ves esto, las notificaciones funcionan.", url: "./#ajustes", tag: "prueba" },
                                   { soloAdmin: true });

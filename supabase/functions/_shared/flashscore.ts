@@ -133,6 +133,44 @@ export async function estadisticas(id: string): Promise<{ local: any[]; visitant
   return { local, visitante, extra };
 }
 
+/**
+ * Córners por bloque de tiempo (mercado experimental de córners, DECISIONES 37).
+ * El feed de estadísticas trae un bloque "Match" y uno por tiempo ("1st Half", "2nd Half"; este último
+ * solo aparece cuando arranca el 2T). Verificado el 15 nov 2026: con 0 córners la fila viene explícita
+ * ("Corner kicks" 0-0); un partido SIN estadísticas devuelve el feed vacío.
+ * Poka-yoke: null = no hay dato (nunca se confunde con 0 córners). `filas` = cuántas estadísticas trae el
+ * bloque "Match", para saber que el partido sí tiene cobertura. `extra` = todas las filas del bloque "Match".
+ */
+export interface CornersFS {
+  partido: [number, number] | null;
+  t1: [number, number] | null;
+  t2: [number, number] | null;
+  filas: number;
+  extra: Record<string, [string, string]>;
+}
+export async function corners(id: string): Promise<CornersFS> {
+  const t = await texto(`${FEED}/df_st_1_${id}`);
+  const out: CornersFS = { partido: null, t1: null, t2: null, filas: 0, extra: {} };
+  let bloque = "";
+  const vistos = new Set<string>();
+  const num = (x: string | undefined) => { const n = parseInt(String(x ?? ""), 10); return Number.isFinite(n) ? n : null; };
+  for (const c of registros(t)) {
+    if (c.SE !== undefined) { bloque = c.SE.toLowerCase(); vistos.clear(); continue; }
+    if (!c.SG) continue;
+    const nombre = c.SG.toLowerCase();
+    if (vistos.has(nombre)) continue;
+    vistos.add(nombre);
+    if (bloque === "match") { out.filas++; out.extra[c.SG] = [c.SH ?? "", c.SI ?? ""]; }
+    if (nombre !== "corner kicks") continue;
+    const l = num(c.SH), v = num(c.SI);
+    if (l === null || v === null) continue;
+    if (bloque === "match") out.partido = [l, v];
+    else if (bloque === "1st half") out.t1 = [l, v];
+    else if (bloque === "2nd half") out.t2 = [l, v];
+  }
+  return out;
+}
+
 export interface CuotasFS {
   apertura: { local: number; empate: number; visitante: number; casas: number } | null;
   actual: { local: number; empate: number; visitante: number; casas: number } | null;

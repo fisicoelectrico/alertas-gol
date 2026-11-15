@@ -426,7 +426,73 @@ Object.assign(pantallas, {
       ${item("alertas", "Alertas técnicas", "Cada alerta con sus números")}
       ${item("rendimiento", "Rendimiento técnico", "Acierto vs implícita, por regla y por liga")}
       ${item("ligas", "Ligas", "Encender y apagar ligas")}
-      ${item("ajustes", "Ajustes del algoritmo", "Umbrales, horario, presupuesto de API, notificaciones")}`;
+      ${item("ajustes", "Ajustes del algoritmo", "Umbrales, horario, presupuesto de API, notificaciones")}
+      ${item("corners", "Córners (laboratorio)", "Avisos de córners solo para ti y su acierto vs cuota")}`;
+  },
+
+  // ---------- Córners (lab, DECISIONES 37): solo administrador ----------
+  async corners() {
+    const r = await conPin((pin) => post("/admin/corners", { pin }));
+    if (!r) return `<div class="tarjeta vacio"><strong>Necesitas ser administrador</strong>Abre tu enlace de administrador o escribe el PIN.</div>`;
+    const P = r.params || {};
+    const NOMBRE = { c1t_cero20: "1T · 0 córners al 20'", c2t_fav77: "2T · favorito perdiendo al 77'" };
+    const RES = { acierto: "✅ Salió", fallo: "❌ No salió", pendiente: "⏳ En juego", anulada: "Anulada" };
+    const SIN = { sin_pareja_api: "sin pareja en API", tope_diario: "tope diario de consultas", sin_presupuesto_api: "sin cupo de API",
+      sin_mercado: "la API no ofrecía córners", sin_mercado_de_ese_tiempo: "solo córners de otro tiempo", sin_esa_linea: "no estaba esa línea", error_api: "error de la API" };
+    const pct = (a, b) => b ? `${Math.round(a / b * 100)}%` : "–";
+    setTimeout(() => {
+      $("#btn-corners")?.addEventListener("click", async () => {
+        const cambios = {};
+        document.querySelectorAll("[data-ck]").forEach((i) => {
+          const v = i.type === "checkbox" ? i.checked : Number(i.value);
+          if (JSON.stringify(v) !== JSON.stringify(P[i.dataset.ck])) cambios[i.dataset.ck] = v;
+        });
+        if (!Object.keys(cambios).length) return toast("No hay cambios");
+        const g = await conPin((pin) => post("/admin/config", { pin, cambios }));
+        if (g) { toast(g.version_corners ? `Guardado: ahora es la versión ${g.version_corners}` : "Guardado"); navegar(); }
+      });
+    });
+    const campo = (k, t, d) => `<div class="campo"><label for="ck-${k}">${t}<small>${d}</small></label>
+      <input id="ck-${k}" type="number" step="1" inputmode="numeric" data-ck="${k}" value="${esc(P[k])}" style="max-width:80px"></div>`;
+    const base = Object.fromEntries((r.base || []).map((b) => [b.mercado, b]));
+    const resumen = (r.resumen || []).map((x) => {
+      const res = x.aciertos + x.fallos, b = base[x.mercado];
+      const ganaImpl = x.resueltas_con_cuota && x.implicita_pct != null ? (x.aciertos_con_cuota / x.resueltas_con_cuota * 100 > Number(x.implicita_pct)) : null;
+      return `<tr><td>${esc(NOMBRE[x.mercado] || x.mercado)}<small class="sub">${esc(x.version)}${b ? ` · ${b.avisaron}/${b.revisados} revisados avisaron` : ""}</small></td>
+        <td>${x.avisos}</td><td>${pct(x.aciertos, res)}<small class="sub">${x.aciertos}/${res}</small></td>
+        <td class="${ganaImpl === null ? "" : ganaImpl ? "pos" : "neg"}">${pct(x.aciertos_con_cuota, x.resueltas_con_cuota)}<small class="sub">vs ${x.implicita_pct ?? "–"}% impl.</small></td>
+        <td class="${Number(x.ganancia_u) > 0 ? "pos" : Number(x.ganancia_u) < 0 ? "neg" : ""}">${n(x.ganancia_u)} u</td></tr>`;
+    }).join("");
+    const fila = (a) => `<div class="tarjeta ${a.resultado === "acierto" ? "acierto" : a.resultado === "fallo" ? "fallo" : ""}">
+        <div class="fila detalle"><span><b>${esc(NOMBRE[a.mercado] || a.mercado)}</b> · ${esc(a.version)}</span><span>${esc(RES[a.resultado] || a.resultado)}</span></div>
+        <p style="margin:6px 0 2px">${esc(a.local)} <b class="num">${a.goles_local}–${a.goles_visitante}</b> ${esc(a.visitante)} · min ${a.minuto}
+          ${a.favorito ? `<small class="sub">favorito: ${esc(a.favorito === "home" ? a.local : a.visitante)}</small>` : ""}</p>
+        <small class="sub">${esc(a.liga || "")} · ${hora(a.ts)}</small>
+        <p class="nota">Córners al avisar ${a.corners_local + a.corners_visitante} · línea más de ${n(a.linea, 1).replace(".", ",")}
+          · ${a.cuota ? `cuota <b>${n(a.cuota)}</b>${a.mercado_nombre ? ` (${esc(a.mercado_nombre)})` : ""}` : `sin cuota: ${esc(SIN[a.motivo_sin_cuota] || a.motivo_sin_cuota || "–")}`}
+          ${a.corners_final != null ? ` · ahora/final ${a.corners_final}` : ""}${a.nota ? ` · ${esc(a.nota)}` : ""}</p>
+      </div>`;
+    return `<div class="tarjeta">
+        <div class="campo"><label for="ck-corners_activo"><b>Córners (laboratorio)</b><small>Versión ${esc(P.corners_version || "c1")} · solo tú recibes estos avisos · consultas de API hoy ${r.consultas_hoy}/${esc(P.corners_api_max_dia)}</small></label>
+          <label class="sw"><input id="ck-corners_activo" type="checkbox" data-ck="corners_activo" ${P.corners_activo ? "checked" : ""}><span></span></label></div>
+      </div>
+      <div class="titulo-seccion"><h2>¿Está funcionando?</h2></div>
+      ${resumen ? `<div class="tarjeta tabla-wrap"><table><thead><tr><th>Mercado</th><th>Avisos</th><th>Acierto</th><th title="Solo las que tuvieron cuota">Con cuota</th><th>Ganancia</th></tr></thead><tbody>${resumen}</tbody></table></div>
+        <p class="nota">La que manda es "Con cuota": acierto de las alertas que sí tenían cuota, contra la probabilidad implícita de esas cuotas (verde si la supera). Con menos de 30 resueltas todavía no se puede concluir nada.</p>`
+        : `<div class="tarjeta vacio"><strong>Aún no hay avisos de córners</strong>Llegan cuando un partido va 0 córners entre el ${esc(P.corners_1t_min_desde)}' y el ${esc(P.corners_1t_min_hasta)}', o cuando el favorito va perdiendo entre el ${esc(P.corners_2t_min_desde)}' y el ${esc(P.corners_2t_min_hasta)}'.</div>`}
+      <div class="titulo-seccion"><h2>Últimos avisos</h2></div>
+      ${(r.alertas || []).slice(0, 40).map(fila).join("") || `<p class="nota">Sin avisos todavía.</p>`}
+      <div class="titulo-seccion"><h2>Parámetros</h2></div>
+      <div class="tarjeta">
+        ${campo("corners_1t_min_desde", "1T desde el minuto", "Desde cuándo se revisa si va 0 córners")}
+        ${campo("corners_1t_min_hasta", "1T hasta el minuto", "Ventana amplia para que ningún ciclo se la salte")}
+        ${campo("corners_2t_min_desde", "2T desde el minuto", "Desde cuándo se revisa si el favorito pierde")}
+        ${campo("corners_2t_min_hasta", "2T hasta el minuto", "")}
+        ${campo("corners_objetivo", "Córners más que se buscan", "La línea es córners actuales + este número − 0,5")}
+        ${campo("corners_api_max_dia", "Consultas de API por día", "Una por aviso, para leer la cuota")}
+        <p class="nota">Cambiar minutos u objetivo abre una versión nueva (c1 → c2) para no mezclar resultados. El tope de consultas y el interruptor no cambian la versión.</p>
+        <div class="botones"><button class="btn" id="btn-corners">Guardar</button></div>
+      </div>`;
   },
 
   async amigos() {
