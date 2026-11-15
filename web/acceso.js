@@ -265,8 +265,8 @@ function metricas(lista) {
   return { cerradas: c.length, salieron: c.filter((a) => a.resultado === "acierto").length, yield: c.length ? 100 * g / c.length : null };
 }
 
-// Partidos en vivo, sin jerga: marcador, minuto y si está "cumpliendo" (favorito que pierde y está en
-// seguimiento). Sale de la última foto del radar (/widget), no gasta consultas de API-Football.
+// Partidos en vivo, sin jerga: marcador, minuto y si es "candidato" (favorito que pierde y está en
+// seguimiento). Poka-yoke (Fredy, 15 nov): sello neutro, nunca "cumpliendo": solo la alerta es llamativa. Sale de la última foto del radar (/widget), no gasta consultas de API-Football.
 function listaEnVivo(w, abiertas) {
   if (!w?.partidos) return "";
   const conAlerta = new Set(abiertas.map((a) => `${a.local}|${a.visitante}`));
@@ -278,11 +278,11 @@ function listaEnVivo(w, abiertas) {
       <span class="vmin num">${p.e === "HT" ? "Desc." : p.m != null ? `${p.m}'` : esc(ESTADOS[p.e] || p.e)}</span>
       <span class="vequipos"><span>${esc(p.l)}${p.fav === "home" ? " <i class=\"vfav\">★</i>" : ""}</span><span>${esc(p.v)}${p.fav === "away" ? " <i class=\"vfav\">★</i>" : ""}</span></span>
       <b class="vgoles num">${p.gl}<br>${p.gv}</b>
-      ${p.c ? `<span class="vcumple">Cumpliendo</span>` : ""}
+      ${p.c ? `<span class="vcumple">Candidato</span>` : ""}
     </div>`;
-  return `<div class="titulo-seccion"><h2>En vivo</h2><small>${vivos.length} partidos${cumplen ? ` · ${cumplen} cumpliendo` : ""} · ${w.ts ? hace(w.ts) : ""}</small></div>
+  return `<div class="titulo-seccion"><h2>En vivo</h2><small>${vivos.length} partidos${cumplen ? ` · ${cumplen} candidato${cumplen === 1 ? "" : "s"}` : ""} · ${w.ts ? hace(w.ts) : ""}</small></div>
     <div class="tarjeta lista-vivo">${vivos.map(fila).join("")}</div>
-    <p class="nota explica">★ = favorito. "Cumpliendo" = el favorito va perdiendo y lo estamos midiendo: si además ataca mucho y la cuota sirve, llega la alerta.</p>`;
+    <p class="nota explica">★ = favorito. "Candidato" = el favorito va perdiendo y lo estamos midiendo, pero todavía no cumple todo. No es señal para entrar: solo cuenta cuando llega la alerta.</p>`;
 }
 
 // ---------- pantallas nuevas ----------

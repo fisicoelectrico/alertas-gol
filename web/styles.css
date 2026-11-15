@@ -451,8 +451,7 @@ p.marcada { display: block; }
 .vequipos span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vgoles { grid-area: goles; text-align: right; font-size: 15px; line-height: 1.35; }
 .vfav { font-style: normal; color: var(--ambar); font-size: 11px; }
-.vcumple { grid-area: cumple; justify-self: start; margin-top: 3px; font-size: 11px; font-weight: 700; color: #04130b; background: var(--ambar); border-radius: 10px; padding: 1px 8px; }
-.vfila.cumple .vequipos { font-weight: 600; }
+.vcumple { grid-area: cumple; justify-self: start; margin-top: 3px; font-size: 11px; font-weight: 700; color: var(--tenue); background: none; border: 1px solid var(--linea); border-radius: 10px; padding: 0 8px; }
 
 /* Interruptores: tamaño fijo (la regla .campo label los estiraba a todo el ancho) */
 .campo label.sw { flex: none; width: 52px; height: 30px; }
