@@ -152,18 +152,45 @@ async function resumen() {
 // Widget de Android y resumen compacto: lo mínimo para pintar "N en vivo · M candidatos" y la lista.
 // Lee la última foto del radar (no gasta consultas de API-Football) y marca como candidato lo que
 // el escáner tiene en seguimiento o con alerta pendiente. Respuesta chica (~100 bytes por partido).
+// ---------- En vivo = solo ligas habilitadas (16 nov, Fredy) ----------
+// La sección "En vivo" de Ahora y el widget de Android muestran SOLO partidos de ligas con
+// habilitada = true: las apagadas y las que ni están en futbol.ligas (ej. femenina argentina) se ocultan.
+// Es filtro de lectura: el escáner sigue guardando la foto completa de Flashscore (todas las ligas)
+// y la pestaña Radar sigue mostrando las no registradas para la revisión semanal de ligas.
+// Los partidos solo de Flashscore (lg = 0, "sin cruce") se reconocen por nombre + país, contra el nombre
+// de la liga y contra los nombres que Flashscore ya usó para esa liga (futbol.fs_partidos: "SPAIN: LaLiga2"
+// → liga 141). Cero consultas a API-Football.
+const claveFS = (liga: string) => {
+  const [pais, resto] = liga.includes(": ") ? liga.split(/: (.*)/s) : ["", liga];
+  return `${(resto ?? liga).replace(/ - .*$/, "").toLowerCase()}|${pais.toLowerCase()}`;
+};
+async function ligasHabilitadas() {
+  const filas = await sql`select id, lower(nombre) as n, lower(coalesce(pais, '')) as p from futbol.ligas where habilitada`;
+  const ids = new Set(filas.map((f: any) => Number(f.id)));
+  const nombres = new Set(filas.map((f: any) => `${f.n}|${f.p}`));
+  const alias = await sql`select distinct f.liga from futbol.fs_partidos f join futbol.partidos p using (fixture_id)
+                          join futbol.ligas l on l.id = p.liga_id where l.habilitada and f.liga is not null`;
+  for (const a of alias) nombres.add(claveFS(a.liga));
+  return (j: any) => Number(j?.lg) > 0
+    ? ids.has(Number(j.lg))
+    : nombres.has(`${String(j?.liga ?? "").toLowerCase()}|${String(j?.pais ?? "").toLowerCase()}`);
+}
+
 async function widget() {
   const [u0] = await sql`select ts, partidos_vivos, candidatos, radar from futbol.escaneos
                          where radar is not null order by ts desc limit 1`;
   if (!u0) return { ts: null, vivos: 0, candidatos: 0, partidos: [] };
-  const u = await fotoSinExcluidas(u0);
+  const habilitada = await ligasHabilitadas();
+  const u = { ...u0, radar: (u0.radar ?? []).filter(habilitada) };
   const segs = new Set((await sql`
     select fixture_id from futbol.partidos where seguimiento
     union select fixture_id from futbol.alertas where resultado = 'pendiente'`).map((r: any) => String(r.fixture_id)));
   const partidos = (u.radar ?? []).map((p: any) => ({
     id: p.id, e: p.e, m: p.m, l: p.l, v: p.v, gl: p.gl, gv: p.gv, fav: p.fav, liga: p.liga, c: segs.has(String(p.id)),
   })).sort((a: any, b: any) => Number(b.c) - Number(a.c) || (b.m ?? -1) - (a.m ?? -1));
-  return { ts: u.ts, vivos: u.partidos_vivos ?? partidos.length, candidatos: partidos.filter((p: any) => p.c).length, partidos };
+  // vivos se cuenta sobre la lista ya filtrada (el conteo guardado incluye todas las ligas)
+  const vivos = partidos.filter((p: any) => ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(p.e)).length;
+  return { ts: u.ts, vivos, candidatos: partidos.filter((p: any) => p.c).length, partidos };
 }
 
 // Pestaña Radar. No llama a API-Football: lee la foto que el escáner guardó en su último barrido.
