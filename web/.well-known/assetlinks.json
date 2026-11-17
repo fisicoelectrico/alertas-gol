@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.fredyquiroga.goles.widget",
+      "sha256_cert_fingerprints": [
+        "84:8A:E2:74:40:FD:32:2F:5F:75:C1:E5:04:E2:9D:F1:96:FC:52:7D:06:28:A1:19:1E:A8:AB:DA:5B:24:A2:53"
+      ]
+    }
+  }
+]

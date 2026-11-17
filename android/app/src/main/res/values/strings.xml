@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="descripcion">Partidos en vivo y candidatos del radar</string>
+    <string name="atajo_widget">Widget y diagnóstico</string>
 </resources>

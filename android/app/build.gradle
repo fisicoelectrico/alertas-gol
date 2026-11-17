@@ -1,17 +1,29 @@
-// App mínima: solo el widget de pantalla de inicio. Sin librerías externas (ni AndroidX):
-// todo usa el framework de Android, así el APK pesa ~30 KB y no hay dependencias que mantener.
+// App "ADN Soccer": abre la PWA como Trusted Web Activity (TWA) y trae el widget de pantalla de inicio.
+// Única librería: androidbrowserhelper (Google), que implementa el lado Android de la TWA:
+// lanzar Chrome en modo app, verificar el dominio y recibir las notificaciones delegadas.
 plugins { id "com.android.application" }
 
 android {
     namespace "com.fredyquiroga.goles"
-    compileSdk 35
+    compileSdk 36
     defaultConfig {
+        // Se conserva el id del APK del widget: así el nuevo APK ACTUALIZA al que ya está instalado.
+        // Este id es el que va en web/.well-known/assetlinks.json; si cambia, la TWA pierde la verificación.
         applicationId "com.fredyquiroga.goles.widget"
         minSdk 26
         targetSdk 35
         // El número de versión lo pone GitHub Actions (número de ejecución) para que cada APK actualice al anterior
         versionCode = Integer.parseInt(System.getenv("VERSION_CODE") ?: "1")
-        versionName = "1." + (System.getenv("VERSION_CODE") ?: "0")
+        versionName = "2." + (System.getenv("VERSION_CODE") ?: "0")
+        // Datos de la TWA en un solo lugar (el manifiesto los lee como @string/... y @color/...)
+        resValue "string", "appName", "ADN Soccer"
+        resValue "string", "launchUrl", "https://goles.fredyquiroga.com/"
+        resValue "string", "hostName", "goles.fredyquiroga.com"
+        resValue "color", "colorPrimary", "#0d1512"
+        resValue "color", "backgroundColor", "#0d1512"
+        // Declaración que Android/Chrome cruzan con https://goles.fredyquiroga.com/.well-known/assetlinks.json
+        resValue "string", "assetStatements",
+            '[{\\"relation\\": [\\"delegate_permission/common.handle_all_urls\\"], \\"target\\": {\\"namespace\\": \\"web\\", \\"site\\": \\"https://goles.fredyquiroga.com\\"}}]'
     }
     signingConfigs {
         // Firma fija: si cambia, Android no deja actualizar y toca desinstalar. Ver android/README.md.
@@ -36,4 +48,9 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    // Misma versión que usa Bubblewrap (la herramienta oficial de Google para generar TWAs)
+    implementation "com.google.androidbrowserhelper:androidbrowserhelper:2.7.4"
 }

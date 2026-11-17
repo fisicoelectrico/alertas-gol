@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="widget" android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/atajo_widget"
+        android:shortcutLongLabel="@string/atajo_widget">
+        <intent android:action="android.intent.action.VIEW"
+            android:targetPackage="com.fredyquiroga.goles.widget"
+            android:targetClass="com.fredyquiroga.goles.Inicio" />
+    </shortcut>
+</shortcuts>
