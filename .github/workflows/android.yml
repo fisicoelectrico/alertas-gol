@@ -1,7 +1,8 @@
-# Compila el APK del widget en los servidores de GitHub (traen el SDK de Android instalado)
+# Compila el APK de ADN Soccer (TWA + widget) en los servidores de GitHub (traen el SDK de Android)
 # y lo publica como Release, con un enlace fijo para descargarlo desde el celular:
-#   https://github.com/fisicoelectrico/alertas-gol/releases/latest/download/alertas-gol-widget.apk
-name: APK del widget
+#   https://github.com/fisicoelectrico/alertas-gol/releases/latest/download/adn-soccer.apk
+# (el nombre viejo alertas-gol-widget.apk se sigue publicando para no romper enlaces anteriores)
+name: APK de ADN Soccer
 on:
   push:
     paths: ["android/**", ".github/workflows/android.yml"]
@@ -29,8 +30,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp android/app/build/outputs/apk/release/app-release.apk alertas-gol-widget.apk
-          gh release create "widget-${{ github.run_number }}" alertas-gol-widget.apk \
+          cp android/app/build/outputs/apk/release/app-release.apk adn-soccer.apk
+          cp adn-soccer.apk alertas-gol-widget.apk
+          gh release create "app-${{ github.run_number }}" adn-soccer.apk alertas-gol-widget.apk \
             --target "${{ github.sha }}" --latest \
-            --title "Widget de Android 1.${{ github.run_number }}" \
-            --notes "APK del widget de pantalla de inicio (rama ${{ github.ref_name }}). Instalar: abrir el enlace desde el celular y permitir la instalación."
+            --title "ADN Soccer 2.${{ github.run_number }}" \
+            --notes "App de Android (TWA + widget), rama ${{ github.ref_name }}. Las notificaciones salen a nombre de ADN Soccer. Instalar: abrir el enlace desde el celular y permitir la instalación."

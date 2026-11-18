@@ -9,7 +9,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-/** Pantalla de bienvenida: el APK existe por el widget; la app completa sigue siendo la PWA. */
+/** Pantalla del widget y diagnóstico (atajo al mantener presionado el ícono de ADN Soccer). */
 public class Inicio extends Activity {
     @Override
     protected void onCreate(Bundle b) {
@@ -23,15 +23,15 @@ public class Inicio extends Activity {
         TextView t = new TextView(this);
         t.setTextColor(0xFFE8F0EA);
         t.setTextSize(16);
-        t.setText("Goles widget\n\nMantén presionado un espacio vacío de la pantalla de inicio → Widgets → "
-                + "\"Goles widget\" y arrástralo.\n\nMuestra cuántos partidos hay en vivo, cuántos son candidatos "
+        t.setText("Widget de ADN Soccer\n\nMantén presionado un espacio vacío de la pantalla de inicio → Widgets → "
+                + "\"ADN Soccer\" y arrástralo.\n\nMuestra cuántos partidos hay en vivo, cuántos son candidatos "
                 + "y la lista (deslizable). Se actualiza solo cada 15 min; el botón ⟳ lo actualiza al instante.\n\n"
-                + "Las alertas siguen llegando por la app web (PWA).");
+                + "Las alertas llegan como notificación de la app ADN Soccer.");
         l.addView(t);
 
         Button abrir = new Button(this);
         abrir.setText("Abrir ADN Soccer");
-        abrir.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(GolesWidget.PWA))));
+        abrir.setOnClickListener(v -> startActivity(Abrir.abrirApp(this, GolesWidget.PWA)));
         l.addView(abrir);
         // Caja negra: si algo falló, se muestra aquí para poder enviar una captura.
         String err = Diagnostico.leer(this);

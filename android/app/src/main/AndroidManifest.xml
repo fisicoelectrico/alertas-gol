@@ -1,24 +1,85 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Único permiso: internet, para leer /api/widget (datos públicos, sin llaves). -->
+    <!-- Internet: la TWA y el widget (que lee /api/widget, datos públicos, sin llaves). -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 13+: sin este permiso la app no puede mostrar las notificaciones que Chrome le delega. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".Aplicacion"
-        android:label="ADN Soccer"
+        android:label="@string/appName"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
-        <!-- Pantalla mínima: explica cómo poner el widget y abre la PWA. -->
-        <activity android:name=".Inicio" android:exported="true">
+        <!-- La app declara qué sitio le pertenece. Chrome lo cruza con /.well-known/assetlinks.json del dominio:
+             si ambos lados coinciden (paquete + huella de la firma), la TWA queda "verificada": pantalla
+             completa sin barra de URL y permiso para recibir las notificaciones del sitio. -->
+        <meta-data android:name="asset_statements" android:resource="@string/assetStatements" />
+
+        <!-- ===== TWA: el ícono "ADN Soccer" abre la PWA dentro de Chrome, en modo app ===== -->
+        <activity android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
+            android:label="@string/appName"
+            android:exported="true"
+            android:alwaysRetainTaskState="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <meta-data android:name="android.support.customtabs.trusted.DEFAULT_URL"
+                android:value="@string/launchUrl" />
+            <meta-data android:name="android.support.customtabs.trusted.STATUS_BAR_COLOR"
+                android:resource="@color/colorPrimary" />
+            <meta-data android:name="android.support.customtabs.trusted.NAVIGATION_BAR_COLOR"
+                android:resource="@color/colorPrimary" />
+            <meta-data android:name="android.support.customtabs.trusted.SPLASH_IMAGE_DRAWABLE"
+                android:resource="@drawable/splash" />
+            <meta-data android:name="android.support.customtabs.trusted.SPLASH_SCREEN_BACKGROUND_COLOR"
+                android:resource="@color/backgroundColor" />
+            <meta-data android:name="android.support.customtabs.trusted.SPLASH_SCREEN_FADE_OUT_DURATION"
+                android:value="300" />
+            <meta-data android:name="android.support.customtabs.trusted.SCREEN_ORIENTATION"
+                android:value="portrait" />
+            <!-- Mantener presionado el ícono: atajo a la pantalla del widget y diagnóstico. -->
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Los enlaces a goles.fredyquiroga.com se abren en la app (autoVerify usa el mismo assetlinks.json). -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="@string/hostName" />
+            </intent-filter>
         </activity>
 
-        <!-- Trampolín sin pantalla para abrir la PWA desde el widget (intent explícito). -->
+        <!-- Delegación de notificaciones: cuando llega una push del sitio, Chrome ya no la muestra él mismo;
+             se la pasa a este servicio y la notificación sale A NOMBRE DE ESTA APP (por eso Huawei Health la ve).
+             Solo funciona si la TWA está verificada (assetlinks.json). -->
+        <!-- AlertasGol hereda de DelegationService: las alertas y los goles salen en el canal "Alertas de gol"
+             con sonido propio (res/raw/gol.ogg); el resto, como siempre. -->
+        <service android:name=".AlertasGol"
+            android:enabled="true"
+            android:exported="true">
+            <meta-data android:name="android.support.customtabs.trusted.SMALL_ICON"
+                android:resource="@drawable/ic_notificacion" />
+            <!-- Canal de importancia alta: aviso emergente con sonido/vibración (si la versión de la librería lo soporta). -->
+            <meta-data android:name="androidx.browser.trusted.USE_HIGH_PRI_NOTIFICATIONS"
+                android:value="true" />
+            <intent-filter>
+                <action android:name="android.support.customtabs.trusted.TRUSTED_WEB_ACTIVITY_SERVICE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+        <!-- Pide el permiso de notificaciones de Android 13+ cuando la página llama Notification.requestPermission(). -->
+        <activity android:name="com.google.androidbrowserhelper.trusted.NotificationPermissionRequestActivity" />
+        <activity android:name="com.google.androidbrowserhelper.trusted.FocusActivity" />
+
+        <!-- ===== Widget de pantalla de inicio ===== -->
+        <!-- Pantalla del widget y diagnóstico (atajo al mantener presionado el ícono). -->
+        <activity android:name=".Inicio" android:exported="true" android:label="Widget y diagnóstico" />
+
+        <!-- Trampolín sin pantalla para abrir la app desde el widget (intent explícito). -->
         <activity android:name=".Abrir" android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:excludeFromRecents="true" android:noHistory="true" />
