@@ -158,3 +158,8 @@ Cada punto reemplaza o precisa lo dicho arriba. El porqué detallado está en `D
 - **Agenda:** `futbol.agenda` se llena desde Flashscore (`fs_id`, `cuota_pre_consultada`, `casas`); vista `v_agenda_favoritos`; pantalla Control → Favoritos de hoy y mañana.
 - **Resolución:** acierto si el total final supera `goles_al_alertar`; minuto del gol desde las incidencias de Flashscore, lado desde `cambios_marcador`; anulada a las 8 h sin final.
 - Detalle y porqués: DECISIONES 42.
+
+## 19. Umbral por liga en el laboratorio (18 nov 2026, aprobado por Fredy: "Dale")
+- `futbol.ligas_ref`: promedio de goles y porcentajes por liga, tomados de SoccerStats (26 ligas habilitadas).
+- Gol temprano: umbral = max(umbral de la base por tramo, 1/P_Poisson), con μ = λ·(95 − minuto)/95. Interruptor `lab_umbral_liga`.
+- Detalle y porqués: DECISIONES 43.
