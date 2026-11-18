@@ -550,6 +550,7 @@ Object.assign(pantallas, {
       ${item("amigos", "Amigos", amigos ? `${activos} con acceso · ${pendientes} enlace${pendientes === 1 ? "" : "s"} sin usar · modo ${amigos.modo_acceso}` : "Crear enlaces y ver quién entra")}
       ${item("vivo", "En vivo técnico", "Candidatos en seguimiento con dominancia, momentum y cuota")}
       ${item("radar", "Radar", "Partidos en vivo y por qué se descartan")}
+      ${item("agenda", "Favoritos de hoy y mañana", "Agenda de Flashscore con la cuota prepartido de cada favorito")}
       ${item("candidatos", "Candidatos", "Los que no llegaron a alerta y su desenlace")}
       ${item("alertas", "Alertas técnicas", "Cada alerta con sus números")}
       ${item("rendimiento", "Rendimiento técnico", "Acierto vs implícita, por regla y por liga")}
@@ -557,6 +558,27 @@ Object.assign(pantallas, {
       ${item("ajustes", "Ajustes del algoritmo", "Umbrales, horario, presupuesto de API, notificaciones")}
       ${item("laboratorio", "Laboratorio", "Umbral de entrada automático, cuotas en vivo y gráficas (goles y córners)")}
       ${item("corners", "Córners (laboratorio)", "Avisos de córners solo para ti y su acierto vs cuota")}`;
+  },
+
+  // ---------- Agenda con favoritos (DECISIONES 42): sale 100 % de Flashscore ----------
+  async agenda() {
+    const r = await get("/agenda");
+    const hora = (t) => new Date(t).toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit", timeZone: "America/Bogota" });
+    const c2 = (v) => (v == null ? "–" : Number(v).toFixed(2).replace(".", ","));
+    const bloque = (titulo, g) => {
+      if (!g) return `<div class="titulo-seccion"><h2>${titulo}</h2></div><div class="tarjeta vacio">Todavía sin partidos en la agenda. La lista de mañana se lee cada 6 horas.</div>`;
+      const filas = g.favoritos.map((p) => {
+        const fav = p.fav === "home" ? p.local : p.visitante;
+        return `<div class="fila-agenda"><span class="num">${hora(p.kickoff)}</span>
+          <span><b>${esc(fav)}</b> <small>${esc(p.local)} vs ${esc(p.visitante)} · ${esc(p.pais ? `${p.pais} · ${p.liga}` : p.liga)}</small></span>
+          <b class="num">${c2(p.cf)}</b></div>`;
+      }).join("");
+      return `<div class="titulo-seccion"><h2>${titulo}</h2><small>${g.favoritos.length} favoritos</small></div>
+        <div class="tarjeta lista-hist">${filas || `<p class="vacio">Ningún favorito con cuota ≤ ${c2(r.cuota_fav_max)} todavía.</p>`}</div>
+        <p class="nota">${g.total} partidos en ligas habilitadas · ${g.con_cuota} con cuota · ${g.pendientes} por consultar (el escáner pide unas 12 cuotas cada 5 minutos, empezando por los más cercanos).</p>`;
+    };
+    return `<p class="nota explica">Favorito = el equipo con la cuota de apertura más baja, promedio de las casas colombianas en Flashscore. Solo se listan los que cumplen el filtro del radar (cuota ≤ ${c2(r.cuota_fav_max)}). Hora de Colombia.</p>
+      ${bloque("Hoy", r.hoy)}${bloque("Mañana", r.manana)}`;
   },
 
   // ---------- Laboratorio (DECISIONES 40): umbral automático y gráficas, solo administrador ----------

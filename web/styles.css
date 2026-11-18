@@ -519,3 +519,8 @@ button.vfila:disabled .vflecha { visibility: hidden; }
 .lab-p { stroke: var(--panel); stroke-width: 1; cursor: crosshair; }
 .mini-ley .lj { border-color: var(--azul); } .mini-ley .lf { border-color: var(--rojo); border-top-style: dotted; }
 .mini-ley .lp { border-color: var(--tenue); }
+
+/* Agenda con favoritos (DECISIONES 42) */
+.fila-agenda { display: grid; grid-template-columns: 3.6em 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--linea); }
+.fila-agenda:last-child { border-bottom: 0; }
+.fila-agenda small { display: block; opacity: .7; overflow-wrap: anywhere; }
