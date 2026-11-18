@@ -125,6 +125,10 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
     const { u, tramo } = umbralDe(U, o.estrategia, min);
     const umbral = Number(u?.umbral ?? o.umbral);
     if (o.alertada || !Number.isFinite(umbral) || mejor.c < umbral) continue;
+    // Confirmación en dos fotos seguidas (18 nov): el feed a veces devuelve por un ciclo un tablero viejo
+    // (Atenas-Fenix, 21': Más de 1,5 otra vez a 1,53). Solo se avisa si la foto anterior también pasaba el umbral.
+    const previa = (o.serie ?? []).slice(-1)[0];
+    if (!previa || Number(previa.c) < umbral) { log(`lab: ${o.estrategia} ${o.fixture_id} pasa el umbral con ${mejor.casa} ${mejor.c}; espera confirmación`); continue; }
     const n = Number(u?.n ?? o.n_hist ?? 0);
     const listo = Number(U.get(o.estrategia)?.n ?? o.n_hist ?? 0) >= nMin;
     let push = 0;
