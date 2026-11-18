@@ -38,16 +38,22 @@ public class AlertasGol extends DelegationService {
         if (Build.VERSION.SDK_INT < 26 || !esDeGol(notification)) {
             return super.onNotifyNotificationWithChannel(platformTag, platformId, notification, channelName);
         }
-        NotificationManager nm = getSystemService(NotificationManager.class);
-        if (nm == null || !nm.areNotificationsEnabled()) return false;
-        crearCanal(this);
-        NotificationChannel c = nm.getNotificationChannel(CANAL);
-        if (c != null && c.getImportance() == NotificationManager.IMPORTANCE_NONE) return false; // canal apagado por el usuario
-        // Misma técnica que usa la librería de Google: reconstruir la notificación y moverla de canal.
-        // Se conservan título, texto, ícono, botones, acción al tocar y el tag (para reemplazar recordatorios).
-        Notification n = Notification.Builder.recoverBuilder(this, notification).setChannelId(CANAL).build();
-        nm.notify(platformTag, platformId, n);
-        return true;
+        try {
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm == null || !nm.areNotificationsEnabled()) return false;
+            crearCanal(this);
+            NotificationChannel c = nm.getNotificationChannel(CANAL);
+            if (c != null && c.getImportance() == NotificationManager.IMPORTANCE_NONE) return false; // canal apagado por el usuario
+            // Misma técnica que usa la librería de Google: reconstruir la notificación y moverla de canal.
+            // Se conservan título, texto, ícono, botones, acción al tocar y el tag (para reemplazar recordatorios).
+            Notification n = Notification.Builder.recoverBuilder(this, notification).setChannelId(CANAL).build();
+            nm.notify(platformTag, platformId, n);
+            return true;
+        } catch (Throwable t) {
+            // Poka-yoke: si algo falla con el canal propio, la alerta igual llega por el canal normal
+            Diagnostico.guardar(this, "canal Alertas de gol", t);
+            return super.onNotifyNotificationWithChannel(platformTag, platformId, notification, channelName);
+        }
     }
 
     /** ¿Es una alerta de trading o un gol? Se decide con lo que ya trae la notificación, sin tocar el servidor. */
