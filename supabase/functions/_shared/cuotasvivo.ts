@@ -62,16 +62,15 @@ export async function fotografiar(f: any, motivo: string, casas: number[], log: 
  * `enVivo` = partidos en forma API-Football con `__fs`; `habilitada(id)` dice si la liga está encendida.
  */
 export async function cicloCuotasVivo(opts: {
-  cfg: Config; enVivo: any[]; habilitada: (id: number) => boolean; candidatos: Set<number>; lab?: Set<number>; log: Log;
+  cfg: Config; enVivo: any[]; habilitada: (id: number) => boolean; candidatos: Set<number>; lab?: Map<number, number>; log: Log;
 }) {
   const { cfg, enVivo, habilitada, candidatos, log } = opts;
-  const lab = opts.lab ?? new Set<number>();
+  const lab = opts.lab ?? new Map<number, number>();   // id → segundos entre fotos
   if (cfg.fs_vivo_activo === false) return { consultas: 0, errores: 0, fotos: 0 };
   const casas = casasDe(cfg);
   const tope = Math.max(Number(cfg.fs_vivo_max_consultas ?? 24), casas.length);
   const cada = Number(cfg.fs_vivo_intervalo_min ?? 10) * 60;
   const cadaCand = Number(cfg.fs_vivo_intervalo_cand_min ?? 2) * 60;
-  const cadaLab = Number(cfg.lab_intervalo_min ?? 2) * 60;
   const vivos = enVivo.filter((f) => f.__fs?.id && habilitada(f.fixture.id) && ["1H", "HT", "2H"].includes(f.fixture.status.short));
   if (!vivos.length) return { consultas: 0, errores: 0, fotos: 0 };
 
@@ -89,7 +88,7 @@ export async function cicloCuotasVivo(opts: {
     let motivo: string | null = null;
     if (!u) motivo = "inicio";
     else if (Number(u.g) !== g) motivo = "gol";
-    else if (lab.has(f.fixture.id) && edad >= cadaLab - 20) motivo = "lab";
+    else if (lab.has(f.fixture.id) && edad >= lab.get(f.fixture.id)! - 20) motivo = "lab";
     else if (f.fixture.status.short === "HT" && u.estado !== "HT") motivo = "descanso";
     else if (candidatos.has(f.fixture.id) && edad >= cadaCand - 20) motivo = "candidato";
     else if (edad >= cada - 20) motivo = "ciclo";

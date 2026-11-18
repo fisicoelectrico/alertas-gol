@@ -896,7 +896,7 @@ Deno.serve(async (req) => {
       // de goles compara la mejor cuota con el umbral calculado desde la base. Aislado: si falla, el radar sigue.
       try {
         const hab = (id: number) => info.get(id)?.habilitada !== false;
-        const lab = await vigilados();
+        const lab = await vigilados(cfg);
         const r = await cicloCuotasVivo({ cfg, enVivo, habilitada: hab, candidatos: new Set(enVivo.filter(esCandidato).map((f) => f.fixture.id)), lab, log });
         if (r.consultas) log(`fs vivo: ${r.fotos} fotos, ${r.consultas} consultas, ${r.errores} errores`);
         (detalle as any).fs_vivo = r;

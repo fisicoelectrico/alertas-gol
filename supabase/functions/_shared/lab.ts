@@ -3,7 +3,8 @@
 //
 // Gol temprano: si el primer gol cae hasta el minuto lab_gt_minuto (15), se abre una oportunidad por
 // estrategia (gt_o15 = Más de 1,5; gt_o25 = Más de 2,5) y se vigila la cuota en vivo de Flashscore
-// cada lab_intervalo_min (2) durante lab_gt_ventana_min (15) minutos, mientras el marcador no cambie.
+// cada lab_intervalo_min (2) los primeros 15 min y luego cada 5, hasta el 2.º gol o el final (lab_gt_ventana_min 90).
+// Más de 1,5 usa un umbral por tramo de minuto (gt_o15_m30, _m45…: seguían 1 gol a ese minuto).
 // Si alguna casa paga ≥ umbral, se avisa al administrador (solo las estrategias de lab_push_estrategias).
 //
 // El umbral NO es fijo: lo calcula la base (futbol.lab_calcular) con las ligas habilitadas.
@@ -25,9 +26,24 @@ export const NOMBRE_LAB: Record<string, { titulo: string; linea: number; texto: 
 };
 const coma = (v: number, d = 2) => v.toFixed(d).replace(".", ",");
 
-/** Ids de los partidos que el laboratorio está vigilando (se fotografían cada lab_intervalo_min). */
-export async function vigilados(): Promise<Set<number>> {
-  return new Set((await sql`select distinct fixture_id from futbol.lab_oportunidades where vigilando`).map((r: any) => r.fixture_id));
+/**
+ * Partidos que el laboratorio está vigilando → cada cuántos segundos fotografiarlos: lab_intervalo_min (2)
+ * los primeros 15 min desde que se abrió el caso y lab_intervalo_largo_min (5) después (ahorra consultas).
+ */
+export async function vigilados(cfg: Config): Promise<Map<number, number>> {
+  const corto = Number(cfg.lab_intervalo_min ?? 2) * 60, largo = Number(cfg.lab_intervalo_largo_min ?? 5) * 60;
+  const m = new Map<number, number>();
+  for (const r of await sql`select fixture_id, bool_or(ts_inicio > now() - interval '15 minutes') as reciente
+                            from futbol.lab_oportunidades where vigilando group by 1`) m.set(r.fixture_id, r.reciente ? corto : largo);
+  return m;
+}
+
+/** Umbral que aplica a un caso en este minuto: Más de 1,5 usa el tramo condicionado (seguía 1 gol al 30', 45'…). */
+function umbralDe(U: Map<string, any>, estrategia: string, min: number | null) {
+  if (estrategia === "gt_o15" && min != null) {
+    for (const t of [75, 60, 45, 30]) if (min >= t && U.get(`gt_o15_m${t}`)) return { u: U.get(`gt_o15_m${t}`), tramo: t };
+  }
+  return { u: U.get(estrategia), tramo: null as number | null };
 }
 
 /** Umbrales de hoy; si tienen más de una hora (o no hay), se recalculan desde la base. */
@@ -54,7 +70,8 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
 
   // 1. Abrir oportunidades: 1T, un solo gol, y el primer cambio de marcador fue hasta el minuto 15
   const mGt = Number(cfg.lab_gt_minuto ?? 15);
-  const ventana = Number(cfg.lab_gt_ventana_min ?? 15);
+  // 90 = hasta el 2.º gol o el final (Fredy, 18 nov). Más de 2,5 no tiene tasa por minuto: se vigila 15 min.
+  const ventana = Number(cfg.lab_gt_ventana_min ?? 90);
   const conUnGol = vivos.filter((f) => f.__fs?.id && habilitada(f.fixture.id) && f.fixture.status.short === "1H" && total(f) === 1);
   if (conUnGol.length) {
     const primeros = await sql`select distinct on (fixture_id) fixture_id, minuto, gl_antes + gv_antes as antes
@@ -68,7 +85,7 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
         const r = await sql`insert into futbol.lab_oportunidades (estrategia, fixture_id, fs_id, liga, local, visitante,
                               minuto_gatillo, goles_gatillo, linea, vence_minuto, n_hist, p_hist, umbral)
                             values (${est}, ${f.fixture.id}, ${f.__fs.id}, ${ligaDe(f)}, ${f.teams.home.name}, ${f.teams.away.name},
-                              ${c.minuto}, 1, ${NOMBRE_LAB[est].linea}, ${Number(c.minuto) + ventana},
+                              ${c.minuto}, 1, ${NOMBRE_LAB[est].linea}, ${Number(c.minuto) + (est === "gt_o15" ? ventana : 15)},
                               ${u?.n ?? null}, ${u?.p ?? null}, ${u?.umbral ?? null})
                             on conflict (fixture_id, estrategia) do nothing returning id`;
         if (r.length) log(`lab: abre ${est} ${f.fixture.id} (gol al ${c.minuto}')`);
@@ -82,7 +99,7 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
   for (const o of await sql`select * from futbol.lab_oportunidades where vigilando order by id`) {
     const f = porId.get(o.fixture_id);
     const min = f?.fixture.status.elapsed ?? null;
-    const sigue = f && f.fixture.status.short === "1H" && total(f) === o.goles_gatillo && (min ?? 999) <= o.vence_minuto;
+    const sigue = f && ["1H", "HT", "2H"].includes(f.fixture.status.short) && total(f) === o.goles_gatillo && (min ?? 999) <= o.vence_minuto;
     if (!sigue) {
       await sql`update futbol.lab_oportunidades set vigilando = false where id = ${o.id}`;
       continue;
@@ -103,11 +120,13 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
               where id = ${o.id}`;
 
     // El umbral vigente (de hoy) manda; si no hay, el que tenía al abrirse
-    const u = U.get(o.estrategia);
+    // El umbral vigente (de hoy, del tramo de minuto) manda; si no hay, el que tenía al abrirse.
+    // lab_n_min se exige a la estrategia completa; el tramo ya castiga su muestra chica con Wilson.
+    const { u, tramo } = umbralDe(U, o.estrategia, min);
     const umbral = Number(u?.umbral ?? o.umbral);
     if (o.alertada || !Number.isFinite(umbral) || mejor.c < umbral) continue;
     const n = Number(u?.n ?? o.n_hist ?? 0);
-    const listo = n >= nMin;
+    const listo = Number(U.get(o.estrategia)?.n ?? o.n_hist ?? 0) >= nMin;
     let push = 0;
     if (listo && cfg.lab_push !== false && avisan.has(o.estrategia)) {
       const L = NOMBRE_LAB[o.estrategia];
@@ -119,14 +138,14 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
         cuerpo: `${o.local} ${f.goals.home}–${f.goals.away} ${o.visitante} · min ${min}\n` +
           `${casas.map((x: any) => `${x.casa} ${coma(x.c)}`).join(" · ")} (umbral ${coma(umbral)})` +
           `${textoMonto(d, baja.c, baja.casa, Number(cfg.monto_max_pct ?? 10))}\n` +
-          `En la base: ${u?.aciertos ?? "?"} de ${n} con gol antes del ${mGt}' ${L.texto}.`,
+          `En la base: ${u?.aciertos ?? "?"} de ${n} con gol antes del ${mGt}'${tramo ? ` que seguían con 1 gol al ${tramo}'` : ""} ${L.texto}.`,
         url: "./#laboratorio", tag: `lab-${o.estrategia}-${o.fixture_id}`,
       }), { soloAdmin: true });
     }
     await sql`update futbol.lab_oportunidades set alertada = true, ts_alerta = now(), minuto_alerta = ${min},
                 cuota_alerta = ${mejor.c}, casa_alerta = ${mejor.casa}, push_enviados = ${push}, umbral = ${umbral}
               where id = ${o.id}`;
-    log(`lab: ${o.estrategia} ${o.fixture_id} supera umbral ${umbral} con ${mejor.casa} ${mejor.c}${listo ? "" : ` (sin push: ${n} casos < ${nMin})`}, push=${push}`);
+    log(`lab: ${o.estrategia}${tramo ? `@${tramo}` : ""} ${o.fixture_id} supera umbral ${umbral} con ${mejor.casa} ${mejor.c}${listo ? "" : ` (sin push: ${n} casos < ${nMin})`}, push=${push}`);
   }
 
   // 3. Resolver: acierto apenas el marcador pasa la línea; fallo/acierto definitivo al terminar

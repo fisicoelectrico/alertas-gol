@@ -621,11 +621,18 @@ Object.assign(pantallas, {
       const serieU = { cls: "u", pts: h.filter((x) => x.umbral != null).map((x) => ({ x: xs(x), y: Number(x.umbral), t: `${dia(x.fecha)} · umbral ${c2(x.umbral)} (${x.aciertos}/${x.n})` })) };
       const serieJ = { cls: "j", pts: h.filter((x) => x.cuota_justa != null).map((x) => ({ x: xs(x), y: Number(x.cuota_justa), t: `${dia(x.fecha)} · cuota justa ${c2(x.cuota_justa)}` })) };
       const esGol = e.startsWith("gt_");
+      // Más de 1,5: umbral según el minuto (partidos que a ese minuto seguían con un solo gol)
+      const tramos = e === "gt_o15" ? [30, 45, 60, 75].map((t) => hoy(`gt_o15_m${t}`)).filter(Boolean) : [];
+      const tablaTramos = tramos.length ? `<div class="tabla-wrap" style="margin-top:6px"><table><thead><tr><th>Si al minuto…</th><th>Se dio</th><th>Umbral</th></tr></thead><tbody>
+          <tr><td>recién el gol</td><td>${u.aciertos}/${u.n}</td><td class="num">${c2(u.umbral)}</td></tr>
+          ${tramos.map((x) => `<tr><td>${x.estrategia.slice(9)}' sigue 1 gol</td><td>${x.aciertos}/${x.n}</td><td class="num">${x.umbral ? c2(x.umbral) : "–"}</td></tr>`).join("")}
+        </tbody></table></div>` : "";
       return `<div class="tarjeta">
         <div class="fila detalle"><span><b>${esc(NOM[e] || e)}</b></span><span class="num">umbral <b>${c2(u.umbral)}</b></span></div>
         <p class="nota" style="margin-top:4px">Se dio ${u.aciertos} de ${u.n} (${pct(u.p)}). Con ese tamaño de muestra lo prudente es asumir al menos ${pct(u.ic_bajo)},
           así que solo hay valor si la casa paga <b>${c2(u.umbral)}</b> o más. ${esGol ? "" : "Córners: sin cuota en vivo gratis, sirve de referencia."}
           ${u.n < Number(P.lab_n_min ?? 30) ? `<br>⚠️ Menos de ${esc(P.lab_n_min ?? 30)} casos: todavía no avisa.` : ""}</p>
+        ${tablaTramos}
         ${h.length > 1 ? grafica({ series: [serieJ, serieU], xEtq: [dia(h[0].fecha), dia(h[h.length - 1].fecha)], aria: `Umbral de ${NOM[e]} por día` })
           : `<p class="nota">La gráfica del umbral por día aparece desde mañana (se guarda un punto por día).</p>`}
         ${h.length > 1 ? `<div class="mini-ley"><span><i class="lu"></i>umbral (prudente)</span><span><i class="lj"></i>cuota justa (tasa real)</span></div>` : ""}
@@ -635,12 +642,12 @@ Object.assign(pantallas, {
     // Curvas de la mejor cuota después del gol, por oportunidad
     const curvas = (e) => {
       const ops = (r.oportunidades || []).filter((o) => o.estrategia === e && (o.serie || []).length);
-      if (!ops.length) return `<div class="tarjeta vacio"><strong>${esc(NOM[e])}: aún sin curvas</strong>Aparecen cuando un partido de liga habilitada marca antes del ${esc(P.lab_gt_minuto ?? 15)}'. Desde ahí se fotografía la cuota cada ${esc(P.lab_intervalo_min ?? 2)} min durante ${esc(P.lab_gt_ventana_min ?? 15)} min.</div>`;
+      if (!ops.length) return `<div class="tarjeta vacio"><strong>${esc(NOM[e])}: aún sin curvas</strong>Aparecen cuando un partido de liga habilitada marca antes del ${esc(P.lab_gt_minuto ?? 15)}'. Desde ahí se fotografía la cuota cada ${esc(P.lab_intervalo_min ?? 2)} min los primeros 15 y luego cada ${esc(P.lab_intervalo_largo_min ?? 5)}, hasta el 2.º gol o el final.</div>`;
       const series = ops.map((o) => ({ cls: o.resultado, pts: o.serie.filter((p) => p.m != null).map((p) => ({ x: p.m - o.minuto_gatillo, y: Number(p.c), t: `${o.local}–${o.visitante} · +${p.m - o.minuto_gatillo}' · ${p.casa} ${c2(p.c)}` })) }));
       const u = hoy(e);
       return `<div class="tarjeta">
         <div class="fila detalle"><span><b>${esc(NOM[e])}</b></span><span class="tenue">${ops.length} partido${ops.length === 1 ? "" : "s"}</span></div>
-        ${grafica({ series, umbral: u ? Number(u.umbral) : null, xEtq: ["gol", `+${P.lab_gt_ventana_min ?? 15} min`], xMin: 0, xMax: Number(P.lab_gt_ventana_min ?? 15), alto: 150, aria: `Mejor cuota después del gol, ${NOM[e]}` })}
+        ${grafica({ series, umbral: u ? Number(u.umbral) : null, xEtq: ["gol", `+${Math.min(Number(P.lab_gt_ventana_min ?? 90), 90)} min`], xMin: 0, xMax: Math.min(Number(P.lab_gt_ventana_min ?? 90), 90), alto: 150, aria: `Mejor cuota después del gol, ${NOM[e]}` })}
         <div class="mini-ley"><span><i class="la"></i>salió</span><span><i class="lf"></i>no salió</span><span><i class="lp"></i>en juego</span><span><i class="lu"></i>umbral de hoy</span></div>
         <p class="nota">Cada línea es un partido: la mejor cuota entre las casas, minuto a minuto desde el gol. Responde tu pregunta de cuánto tarda en subir la cuota.</p>
       </div>`;
@@ -692,8 +699,9 @@ Object.assign(pantallas, {
         ${sw("lab_push", "Avisos al celular", "Cuando una casa paga el umbral o más (por ahora: gol temprano, Más de 1,5)")}
         ${sw("fs_vivo_activo", "Cuotas en vivo", "Apagado: no se fotografía ninguna cuota (la alerta usa API-Football)")}
         ${campo("lab_gt_minuto", "Gol temprano hasta el minuto", "El primer gol debe caer hasta aquí")}
-        ${campo("lab_gt_ventana_min", "Vigilar la cuota (min)", "Minutos después del gol durante los que se mira la cuota")}
-        ${campo("lab_intervalo_min", "Foto cada (min)", "En los partidos vigilados")}
+        ${campo("lab_gt_ventana_min", "Vigilar la cuota (min)", "Minutos después del gol; 90 = hasta el 2.º gol o el final")}
+        ${campo("lab_intervalo_min", "Foto cada (min)", "Los primeros 15 min después del gol")}
+        ${campo("lab_intervalo_largo_min", "Luego, foto cada (min)", "Hasta el 2.º gol o el final")}
         ${campo("lab_n_min", "Casos mínimos para avisar", "Con menos, solo registra")}
         ${campo("fs_vivo_intervalo_min", "Foto del resto cada (min)", "Partidos sin nada especial")}
         ${campo("fs_vivo_max_consultas", "Tope de consultas por ciclo", "Poka-yoke contra bloqueos (3 por partido)")}

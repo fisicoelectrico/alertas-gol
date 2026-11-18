@@ -66,7 +66,7 @@ const EDITABLES = new Set([
   "corners_activo", "corners_push", "corners_cuota", "corners_api_max_dia", ...CORNERS_REGLA,
   // Cuotas en vivo de Flashscore y laboratorio de goles (DECISIONES 40)
   "fs_vivo_activo", "fs_vivo_max_consultas", "fs_vivo_intervalo_min", "fs_vivo_intervalo_cand_min", "fs_fallos_aviso",
-  "lab_activo", "lab_push", "lab_gt_minuto", "lab_gt_ventana_min", "lab_intervalo_min", "lab_n_min",
+  "lab_activo", "lab_push", "lab_gt_minuto", "lab_gt_ventana_min", "lab_intervalo_min", "lab_intervalo_largo_min", "lab_n_min",
 ]);
 // Claves que nunca salen por la API pública
 const OCULTAS = new Set(["token_forzar"]);
