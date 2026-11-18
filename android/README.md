@@ -16,6 +16,19 @@ tratan como una app propia: se puede elegir que el reloj vibre con ella. Además
    no la pinta él: se la pasa al `DelegationService` del APK, que la publica con el nombre e ícono de
    ADN Soccer, en su propio canal de notificaciones.
 
+4. **Sonido de gol (`AlertasGol.java`):** el servicio de delegación es nuestro (hereda del de Google). Las
+   alertas (las que traen los botones Entré / No entro), los avisos de "¡Gooool!" y la prueba de Ajustes se
+   publican en el canal **"Alertas de gol"**, con el sonido `res/raw/gol.ogg` y una vibración propia
+   (corta, corta, larga). El resto sigue en el canal que pide Chrome. En Android 8+ el sonido es del canal, no
+   de la notificación; por eso la web sola no podía hacerlo.
+   - El sonido se genera con `android/sonido/generar_gol.py` (síntesis por formantes + ruido de estadio):
+     es original, sin grabaciones de terceros, y se publica como CC0.
+   - Para cambiarlo (por ejemplo, por tu propia voz): reemplaza `gol.ogg` (mono, 2-3 s) **y sube el número de
+     `CANAL`** en `AlertasGol.java` (`alertas_gol_v2`). Android no deja cambiar el sonido de un canal ya
+     creado; sin el número nuevo seguiría sonando el viejo.
+   - En el teléfono: Ajustes → Apps → ADN Soccer → Notificaciones → "Alertas de gol" para subir volumen,
+     cambiar el sonido a mano o silenciarlo, sin tocar los demás avisos.
+
 Si cambia el paquete (`com.fredyquiroga.goles.widget`) o la llave, hay que actualizar `assetlinks.json`; si no,
 la app abre con barra de URL y las notificaciones vuelven a salir como Chrome.
 

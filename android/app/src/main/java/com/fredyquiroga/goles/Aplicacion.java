@@ -7,6 +7,8 @@ public class Aplicacion extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        // El canal "Alertas de gol" existe desde que se abre la app, así aparece en Ajustes antes de la primera alerta
+        AlertasGol.crearCanal(this);
         final Thread.UncaughtExceptionHandler previo = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((hilo, t) -> {
             Diagnostico.guardar(this, "cierre en hilo " + hilo.getName(), t);

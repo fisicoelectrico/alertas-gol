@@ -56,7 +56,9 @@
         <!-- Delegación de notificaciones: cuando llega una push del sitio, Chrome ya no la muestra él mismo;
              se la pasa a este servicio y la notificación sale A NOMBRE DE ESTA APP (por eso Huawei Health la ve).
              Solo funciona si la TWA está verificada (assetlinks.json). -->
-        <service android:name="com.google.androidbrowserhelper.trusted.DelegationService"
+        <!-- AlertasGol hereda de DelegationService: las alertas y los goles salen en el canal "Alertas de gol"
+             con sonido propio (res/raw/gol.ogg); el resto, como siempre. -->
+        <service android:name=".AlertasGol"
             android:enabled="true"
             android:exported="true">
             <meta-data android:name="android.support.customtabs.trusted.SMALL_ICON"
