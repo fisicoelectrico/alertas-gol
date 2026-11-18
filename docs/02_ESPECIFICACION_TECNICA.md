@@ -144,3 +144,17 @@ Cada punto reemplaza o precisa lo dicho arriba. El porqué detallado está en `D
 
 ## 16. Cambios propuestos para la versión 1.8 (15 nov 2026, pedidos por Fredy)
 1. **Mercado experimental de córners (solo administrador):** dos avisos, "0 córners entre el 20' y el 26' del 1T" (línea 1,5 del 1T) y "favorito perdiendo entre el 77' y el 80'" (línea córners actuales + 1,5). Detección y resolución con estadísticas de Flashscore (gratis); cuota con 1 consulta de `/odds/live` por aviso, con tope diario `corners_api_max_dia`. Tablas `alertas_corners` y `corners_chequeos`; versión propia `corners_version` (c1…), separada de `regla_version`. Push solo a administradores; pantalla Control → Córners (laboratorio). DECISIONES 37.
+
+## 17. Cambios de la versión 1.9 (18 nov 2026, pedidos y aprobados por Fredy)
+- **Cuotas en vivo de Flashscore** (DECISIONES 40): tabla `cuotas_vivo`; fotos en cada gol, laboratorio cada 2 min, descanso, candidatos cada 2 min y el resto cada 10, con tope de 24 consultas por ciclo. Push al administrador si Flashscore deja de responder 3 ciclos seguidos.
+- **Regla v8:** la cuota del Over de la alerta sale de Flashscore (promedio de casas); API-Football queda de respaldo. La push muestra la cuota de cada casa.
+- **Laboratorio de goles:** gol temprano (primer gol ≤15') → Más de 1,5 / 2,5. Umbral = 1 / límite bajo de Wilson 95 %, calculado desde la base cada hora (`lab_calcular`, `lab_umbrales`). Push al administrador cuando una casa lo paga. Pantalla Control → Laboratorio con gráficas, también de córners.
+- **Monto sugerido** (DECISIONES 41): cada persona fija en Mi banca el % de su banca que quiere ganar por entrada; la push calcula el monto con la casa que paga menos, con tope del 10 % de la banca.
+
+## 18. Cambios de la versión 2.0 (18 nov 2026, aprobados por Fredy: "Sí, 100 % Flashscore")
+
+- **Fuente única:** Flashscore da la lista en vivo, la agenda de hoy y mañana, el favorito (cuota prepartido `oce`, apertura promedio de casas colombianas), las estadísticas, la cuota en vivo del Over y el marcador final. API-Football queda como respaldo apagado (`config.api_football_activa = false`) y ya no consume consultas; el presupuesto de 100/día solo aplica si se enciende.
+- **Llave interna:** `fixture_id` propio negativo para todo partido nuevo de Flashscore (`fs_fixture_seq`); ligas nuevas con id negativo (`fs_liga_seq`) y traducción de nombres en `futbol.fs_ligas`. Desaparece el motivo `sin_cruce`.
+- **Agenda:** `futbol.agenda` se llena desde Flashscore (`fs_id`, `cuota_pre_consultada`, `casas`); vista `v_agenda_favoritos`; pantalla Control → Favoritos de hoy y mañana.
+- **Resolución:** acierto si el total final supera `goles_al_alertar`; minuto del gol desde las incidencias de Flashscore, lado desde `cambios_marcador`; anulada a las 8 h sin final.
+- Detalle y porqués: DECISIONES 42.

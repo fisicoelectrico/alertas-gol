@@ -744,7 +744,7 @@ async function desactivarPush() {
 
 // ---------- enrutado ----------
 // Pantallas de Control (solo administrador): se abren desde la pestaña Control.
-const DE_CONTROL = new Set(["vivo", "radar", "alertas", "candidatos", "rendimiento", "ligas", "ajustes", "amigos", "corners"]);
+const DE_CONTROL = new Set(["vivo", "radar", "alertas", "candidatos", "rendimiento", "ligas", "ajustes", "amigos", "corners", "laboratorio", "agenda"]);
 let turno = 0;
 async function navegar(silencioso = false) {
   const pedida = location.hash.replace("#", "") || "ahora";

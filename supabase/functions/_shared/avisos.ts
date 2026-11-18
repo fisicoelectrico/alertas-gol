@@ -4,6 +4,7 @@
 // usan el mismo tag (`alerta-<id>`) y cada una reemplaza a la anterior.
 //
 //  1. Alerta:        "CRB 0–1 Ceará, minuto 66. CRB es favorito, va perdiendo y ataca mucho. Otro gol paga 1,33."
+//                    + una línea con la cuota de cada casa ("Wplay 1,35 · Stake 1,33 · Betano 1,30"), DECISIONES 40.
 //  2. Recordatorios: hasta recordatorios_max (4), cada recordatorio_cada_min (5) minutos, mientras la alerta
 //                    siga abierta, sin gol y antes de recordatorio_minuto_tope. No le llegan a quien ya marcó
 //                    Entré o No entro. Son informativos: solo suben alertas.recordatorios.
@@ -11,22 +12,35 @@
 //  4. Resultado:     si no hubo gol, "No hubo gol" al resolver. Si hubo y ya se avisó, no se repite.
 // =====================================================================
 import { sql, Config } from "./db.ts";
-import { cuotaTxt, Destinatario, ligaTxt, notificar, pesos } from "./notificar.ts";
+import { cuotaTxt, Destinatario, ligaTxt, notificar, pesos, textoMonto } from "./notificar.ts";
 
 const favDe = (a: any): string =>
   a.favorito === "home" ? a.local : a.favorito === "away" ? a.visitante : a.local;
 
 export async function avisoAlerta(alertaId: number) {
-  const [a] = await sql`select a.id, a.minuto, a.cuota, a.marcador, p.local, p.visitante, p.favorito, l.nombre as liga, l.pais
+  const [a] = await sql`select a.id, a.fixture_id, a.linea_over, a.minuto, a.cuota, a.marcador, p.local, p.visitante, p.favorito, l.nombre as liga, l.pais
                         from futbol.alertas a join futbol.partidos p using (fixture_id) left join futbol.ligas l on l.id = p.liga_id
                         where a.id = ${alertaId}`;
   if (!a) return 0;
   const [gl, gv] = String(a.marcador ?? "").split("-");
-  return await notificar({
+  // Cuota de cada casa (DECISIONES 40): la última foto en vivo de esa línea, de mayor a menor
+  const casas = await sql`select distinct on (casa_id) casa, cuota_over from futbol.cuotas_vivo
+                          where fixture_id = ${a.fixture_id} and linea = ${a.linea_over} and activa and cuota_over is not null
+                            and ts > now() - interval '6 minutes'
+                          order by casa_id, ts desc`;
+  casas.sort((x: any, y: any) => Number(y.cuota_over) - Number(x.cuota_over));
+  const porCasa = casas.map((c: any) => `${c.casa} ${cuotaTxt(c.cuota_over)}`).join(" · ");
+  // Monto sugerido con la casa que paga MENOS (Fredy, 18 nov: lo prudente); sin casas, la cuota de la alerta
+  const baja = casas.length ? casas[casas.length - 1] : null;
+  const cuotaBaja = baja ? Number(baja.cuota_over) : Number(a.cuota);
+  const [mx] = await sql`select (valor #>> '{}')::numeric as v from futbol.config where clave = 'monto_max_pct'`;
+  const maxPct = Number(mx?.v ?? 10);
+  return await notificar((d) => ({
     titulo: ligaTxt(a.pais, a.liga),
-    cuerpo: `Alerta en vivo: ${a.local} ${gl ?? "?"}–${gv ?? "?"} ${a.visitante}, minuto ${a.minuto}. ${favDe(a)} es favorito, va perdiendo y ataca mucho. Otro gol paga ${cuotaTxt(a.cuota)}.`,
+    cuerpo: `Alerta en vivo: ${a.local} ${gl ?? "?"}–${gv ?? "?"} ${a.visitante}, minuto ${a.minuto}. ${favDe(a)} es favorito, va perdiendo y ataca mucho. Otro gol paga ${cuotaTxt(a.cuota)}.` +
+      `${porCasa ? `\n${porCasa}` : ""}${textoMonto(d, cuotaBaja, baja?.casa ?? null, maxPct)}`,
     url: "./#ahora", tag: `alerta-${a.id}`, alerta_id: a.id, acciones: true,
-  }, { alertaId: a.id });
+  }), { alertaId: a.id });
 }
 
 // Texto personal del gol: si marcó Entré, cuánto ganó

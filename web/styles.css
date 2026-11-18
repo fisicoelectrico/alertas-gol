@@ -505,3 +505,22 @@ button.vfila:disabled .vflecha { visibility: hidden; }
 .st-barra i { display: block; border-radius: 3px; background: var(--linea); }
 .st-barra i:first-child { background: var(--cesped); }
 .st-barra i:last-child { background: var(--azul); }
+
+/* Laboratorio (DECISIONES 40) */
+.lab-svg { width: 100%; height: auto; display: block; margin-top: 8px; overflow: visible; }
+.lab-t { fill: var(--tenue); font-size: 9.5px; font-family: var(--mono); }
+.lab-g { stroke: var(--linea); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.lab-l { fill: none; stroke-width: 1.8; vector-effect: non-scaling-stroke; stroke-linejoin: round; opacity: .85; }
+.lab-l.u { stroke: var(--ambar); stroke-dasharray: 5 4; } .lab-p.u { fill: var(--ambar); }
+.lab-l.j { stroke: var(--azul); } .lab-p.j { fill: var(--azul); }
+.lab-l.acierto { stroke: var(--cesped); } .lab-p.acierto { fill: var(--cesped); }
+.lab-l.fallo { stroke: var(--rojo); stroke-dasharray: 2 3; } .lab-p.fallo { fill: var(--rojo); }
+.lab-l.pendiente, .lab-l.anulada { stroke: var(--tenue); } .lab-p.pendiente, .lab-p.anulada { fill: var(--tenue); }
+.lab-p { stroke: var(--panel); stroke-width: 1; cursor: crosshair; }
+.mini-ley .lj { border-color: var(--azul); } .mini-ley .lf { border-color: var(--rojo); border-top-style: dotted; }
+.mini-ley .lp { border-color: var(--tenue); }
+
+/* Agenda con favoritos (DECISIONES 42) */
+.fila-agenda { display: grid; grid-template-columns: 3.6em 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--linea); }
+.fila-agenda:last-child { border-bottom: 0; }
+.fila-agenda small { display: block; opacity: .7; overflow-wrap: anywhere; }
