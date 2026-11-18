@@ -35,12 +35,14 @@ export function partesLiga(ligaFS: string): { pais: string | null; liga: string;
 const cacheLigas = new Map<string, number | null>();
 let precargado = 0;   // ms de la última precarga (la instancia puede quedar viva entre ciclos)
 const enFsLigas = new Set<string>();
+const paises = new Map<string, string>();   // "saudi arabia" → "Saudi-Arabia" (como ya está escrito en futbol.ligas)
 async function precargar() {
   if (Date.now() - precargado < 10 * 60000) return;
-  cacheLigas.clear(); enFsLigas.clear();
+  cacheLigas.clear(); enFsLigas.clear(); paises.clear();
   for (const r of await sql`select id, nombre, pais from futbol.ligas order by id > 0, id desc`) {
     // por nombre + país; las positivas (API-Football) se cargan al final y ganan si hay dos iguales
     cacheLigas.set(`${String(r.pais ?? "").toLowerCase().replace(/-/g, " ")}|${String(r.nombre).toLowerCase()}`, r.id);
+    if (r.pais) paises.set(String(r.pais).toLowerCase().replace(/-/g, " "), r.pais);
   }
   for (const r of await sql`select clave, liga_id from futbol.fs_ligas`) { cacheLigas.set(r.clave, r.liga_id); enFsLigas.add(r.clave); }
   precargado = Date.now();
@@ -52,8 +54,11 @@ async function precargar() {
  * ni se jueguen; se crean cuando el partido aparece en vivo).
  */
 export async function ligaDe(ligaFS: string, crear: boolean): Promise<number | null> {
-  const { pais, liga, clave } = partesLiga(ligaFS);
+  const partes = partesLiga(ligaFS);
+  const { liga, clave } = partes;
   await precargar();
+  // El país se escribe como ya está en futbol.ligas (así la política de ligas por país, p. ej. "USA", aplica igual)
+  const pais = partes.pais ? paises.get(partes.pais.toLowerCase()) ?? partes.pais : null;
   const enCache = cacheLigas.get(clave);
   if (enCache) {
     // Puede venir del cruce por nombre + país (la clave es la misma forma): se deja anotado en fs_ligas

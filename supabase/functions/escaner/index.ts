@@ -773,8 +773,10 @@ Deno.serve(async (req) => {
       }
       // 2b. Identidad propia (DECISIONES 42): todo partido en vivo sin fixture (o sin liga) recibe un
       // fixture_id negativo y su liga. Ya no existen los "sin_cruce": todos se pueden evaluar.
-      const registrados = await registrar(vivosFS.filter((p) => p.estado === 2), conocidos, true);
-      if (registrados) log(`fs: ${registrados} partidos nuevos con id propio de Flashscore`);
+      try {
+        const registrados = await registrar(vivosFS.filter((p) => p.estado === 2), conocidos, true);
+        if (registrados) log(`fs: ${registrados} partidos nuevos con id propio de Flashscore`);
+      } catch (e) { log(`fs registrar: ${(e as Error).message}`); }   // si falla, esos partidos quedan "sin_cruce" este ciclo
 
       // 3. Convertir a la forma de API-Football para reutilizar todo el resto del escáner
       // Liga de cada partido: la de la agenda, la que quedó en fs_partidos o la del partido ya guardado
