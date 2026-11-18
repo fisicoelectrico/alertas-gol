@@ -184,7 +184,7 @@ export async function cicloCorners(args: {
     let cuota: number | null = null, mercadoNombre: string | null = null, hayMercado: boolean | null = null;
     let vistos: any = null, consultada = false, motivoSinCuota: string | null = null;
     if (cfg.corners_cuota === false) motivoSinCuota = "cuota_apagada";
-    else if (!fx) motivoSinCuota = "sin_pareja_api";
+    else if (!fx || fx < 0) motivoSinCuota = "sin_pareja_api";   // id negativo = solo Flashscore (DECISIONES 42)
     else if (cupoApi <= 0) motivoSinCuota = "tope_diario";
     else if (api.quedan() < 1) motivoSinCuota = "sin_presupuesto_api";
     else {

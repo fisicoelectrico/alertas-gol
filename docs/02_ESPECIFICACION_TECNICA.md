@@ -150,3 +150,11 @@ Cada punto reemplaza o precisa lo dicho arriba. El porqué detallado está en `D
 - **Regla v8:** la cuota del Over de la alerta sale de Flashscore (promedio de casas); API-Football queda de respaldo. La push muestra la cuota de cada casa.
 - **Laboratorio de goles:** gol temprano (primer gol ≤15') → Más de 1,5 / 2,5. Umbral = 1 / límite bajo de Wilson 95 %, calculado desde la base cada hora (`lab_calcular`, `lab_umbrales`). Push al administrador cuando una casa lo paga. Pantalla Control → Laboratorio con gráficas, también de córners.
 - **Monto sugerido** (DECISIONES 41): cada persona fija en Mi banca el % de su banca que quiere ganar por entrada; la push calcula el monto con la casa que paga menos, con tope del 10 % de la banca.
+
+## 18. Cambios de la versión 2.0 (18 nov 2026, aprobados por Fredy: "Sí, 100 % Flashscore")
+
+- **Fuente única:** Flashscore da la lista en vivo, la agenda de hoy y mañana, el favorito (cuota prepartido `oce`, apertura promedio de casas colombianas), las estadísticas, la cuota en vivo del Over y el marcador final. API-Football queda como respaldo apagado (`config.api_football_activa = false`) y ya no consume consultas; el presupuesto de 100/día solo aplica si se enciende.
+- **Llave interna:** `fixture_id` propio negativo para todo partido nuevo de Flashscore (`fs_fixture_seq`); ligas nuevas con id negativo (`fs_liga_seq`) y traducción de nombres en `futbol.fs_ligas`. Desaparece el motivo `sin_cruce`.
+- **Agenda:** `futbol.agenda` se llena desde Flashscore (`fs_id`, `cuota_pre_consultada`, `casas`); vista `v_agenda_favoritos`; pantalla Control → Favoritos de hoy y mañana.
+- **Resolución:** acierto si el total final supera `goles_al_alertar`; minuto del gol desde las incidencias de Flashscore, lado desde `cambios_marcador`; anulada a las 8 h sin final.
+- Detalle y porqués: DECISIONES 42.

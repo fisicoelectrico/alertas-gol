@@ -47,6 +47,9 @@ import * as FS from "../_shared/flashscore.ts";
 import { cicloCorners } from "../_shared/corners.ts";
 import { cicloCuotasVivo, cuotaOverFS, salud } from "../_shared/cuotasvivo.ts";
 import { cicloLab, vigilados } from "../_shared/lab.ts";
+import { registrar } from "../_shared/identidad.ts";
+import { cicloAgendaFS, favoritosDesdeAgenda } from "../_shared/agendafs.ts";
+import { resolverConFS } from "../_shared/cierrefs.ts";
 
 const json = (d: unknown, status = 200) =>
   new Response(JSON.stringify(d, null, 2), { status, headers: { "Content-Type": "application/json" } });
@@ -241,13 +244,19 @@ Deno.serve(async (req) => {
       },
       presupuesto: est,
       regla: reglaDesde(cfg),
+      fuente_datos: cfg.fuente_datos ?? "api",
+      api_football_activa: cfg.fuente_datos !== "flashscore" || cfg.api_football_activa === true,
       ultimo_radar: cfg.ultimo_radar ?? null,
       ultimo_seguimiento: cfg.ultimo_seguimiento ?? null,
     });
   }
 
-  const key = Deno.env.get("APIFOOTBALL_KEY")?.trim();
-  if (!key) return json({ error: "falta el secreto APIFOOTBALL_KEY" }, 500);
+  // 100 % Flashscore (DECISIONES 42): con fuente_datos = flashscore y api_football_activa = false el
+  // escáner no hace NINGUNA consulta a API-Football (ni agenda, ni cuotas, ni cierre). La llave queda
+  // guardada como respaldo: api_football_activa = true la vuelve a usar sin redeplegar nada.
+  const usarApi = cfg.fuente_datos !== "flashscore" || cfg.api_football_activa === true;
+  const key = Deno.env.get("APIFOOTBALL_KEY")?.trim() ?? "";
+  if (!key && usarApi) return json({ error: "falta el secreto APIFOOTBALL_KEY" }, 500);
 
   const bitacora = async (motivo: string, extra: Record<string, any> = {}) => {
     await sql`insert into futbol.escaneos (motivo, partidos_vivos, candidatos, llamadas, alertas, resueltas, duracion_ms, detalle, radar)
@@ -287,11 +296,12 @@ Deno.serve(async (req) => {
   if (!forzar && !enHorario && nCandidatos === 0 && nPendientes === 0 && !(cfg.fuente_datos === "flashscore" && nObservados > 0)) return json({ motivo: "fuera_de_horario" });
 
   let est = await estadoPresupuesto(cfg);
+  if (!usarApi) est = { ...est, disponibles: 0 };   // presupuesto en cero: cualquier api.get() se frena solo
   // Poka-yoke del reinicio diario: si NUESTRA cuenta dice que hay cupo pero el último header de la
   // API dice que no, puede ser un header viejo (del día anterior). Se confirma con /status, que es
   // gratis, y se recalcula. Si la API de verdad está agotada, /status lo confirma y seguimos parados.
   const segunNosotros = Number(cfg.presupuesto_diario ?? 100) - Number(cfg.reserva_api ?? 6) - est.usadas_hoy;
-  if (est.disponibles < 1 && segunNosotros > 0) {
+  if (usarApi && est.disponibles < 1 && segunNosotros > 0) {
     await verificarCuotaReal(key);
     est = await estadoPresupuesto(cfg);
   }
@@ -313,7 +323,8 @@ Deno.serve(async (req) => {
 
   // ---------- Agenda, cobertura y cuotas en bloque (solo en horario) ----------
   let agenda: { hay: boolean; kickoffs: number[] } = { hay: false, kickoffs: [] };
-  if (cfg.usar_agenda === true && (enHorario || forzar)) {
+  // En 100 % Flashscore la agenda sale de Flashscore dentro del ciclo FS (cicloAgendaFS), no de aquí.
+  if (cfg.usar_agenda === true && (enHorario || forzar) && usarApi) {
     try {
       if (!modoFS) await cargarCobertura(api, cfg, pre);
       await cargarAgenda(api, hoy, regla, pre);
@@ -569,7 +580,7 @@ Deno.serve(async (req) => {
       // a la esperada), se cae al endpoint dedicado para no quedarnos ciegos.
       let equipos: any[] = Array.isArray(f.statistics) ? f.statistics : [];
       let fuenteStats = f.__fuente ?? "fixtures?id";
-      if (!Array.isArray(f.statistics) && api.quedan() > 0) {
+      if (!Array.isArray(f.statistics) && id > 0 && api.quedan() > 0) {
         equipos = (await api.get("/fixtures/statistics", { fixture: id })).response ?? [];
         fuenteStats = "fixtures/statistics";
       }
@@ -583,7 +594,7 @@ Deno.serve(async (req) => {
         log(`sin estadísticas ${id} (${n}/2)`);
         // Modo calibración: una sola vez por partido se pide la cuota en vivo igual, para saber
         // si la liga la tiene. Queda en snapshots.raw (sin estadísticas no hay IP ni dominancia).
-        if (cfg.cuotas_siempre === true && !p.cuota_vivo_probada && api.quedan() > 0) {
+        if (cfg.cuotas_siempre === true && !p.cuota_vivo_probada && id > 0 && api.quedan() > 0) {
           const rOdds = await api.get("/odds/live", { fixture: id });
           const co = A.parsearCuotaOver(rOdds, linea);
           await sql`update futbol.partidos set cuota_vivo_probada = true where fixture_id = ${id}`;
@@ -642,7 +653,7 @@ Deno.serve(async (req) => {
           if (c.cuota !== null || c.suspendida) cuotaOver = { linea, cuota: c.cuota, suspendida: c.suspendida, mercado: c.mercado, lineas: c.lineas };
         } catch (e) { log(`cuota fs ${id}: ${(e as Error).message}`); }
       }
-      if ((vale || cfg.cuotas_siempre === true) && cuotaOver.cuota === null && !cuotaOver.suspendida && !cuotaReciente && api.quedan() > 0) {
+      if ((vale || cfg.cuotas_siempre === true) && cuotaOver.cuota === null && !cuotaOver.suspendida && !cuotaReciente && id > 0 && api.quedan() > 0) {
         rOdds = await api.get("/odds/live", { fixture: id });
         cuotaOver = A.parsearCuotaOver(rOdds, linea);
         if (!p.cuota_vivo_probada) {
@@ -737,7 +748,7 @@ Deno.serve(async (req) => {
         for (const r of await sql`select * from futbol.fs_partidos where fs_id = any(${vivosFS.map((p) => p.id)}::text[])`) conocidos.set(r.fs_id, r);
       }
       const nuevos = vivosFS.filter((p) => p.estado === 2 && !conocidos.get(p.id)?.fixture_id);
-      if (nuevos.length) {
+      if (nuevos.length && usarApi) {
         const desde = new Date(Math.min(...nuevos.map((p) => p.inicio)) - 20 * 60000).toISOString();
         const hasta = new Date(Math.max(...nuevos.map((p) => p.inicio)) + 20 * 60000).toISOString();
         // Un fixture que ya quedó emparejado con otro partido de Flashscore no se vuelve a ofrecer:
@@ -760,13 +771,26 @@ Deno.serve(async (req) => {
         }
         log(`fs: ${mapa.size}/${nuevos.length} partidos nuevos emparejados con API-Football`);
       }
+      // 2b. Identidad propia (DECISIONES 42): todo partido en vivo sin fixture (o sin liga) recibe un
+      // fixture_id negativo y su liga. Ya no existen los "sin_cruce": todos se pueden evaluar.
+      try {
+        const registrados = await registrar(vivosFS.filter((p) => p.estado === 2), conocidos, true);
+        if (registrados) log(`fs: ${registrados} partidos nuevos con id propio de Flashscore`);
+      } catch (e) { log(`fs registrar: ${(e as Error).message}`); }   // si falla, esos partidos quedan "sin_cruce" este ciclo
 
       // 3. Convertir a la forma de API-Football para reutilizar todo el resto del escáner
+      // Liga de cada partido: la de la agenda, la que quedó en fs_partidos o la del partido ya guardado
       const agendaInfo = new Map<number, any>();
       const idsApi = [...conocidos.values()].map((r) => r.fixture_id).filter(Boolean);
       if (idsApi.length) {
-        for (const r of await sql`select a.fixture_id, a.liga_id, a.temporada, l.nombre, l.pais from futbol.agenda a
-                                   left join futbol.ligas l on l.id = a.liga_id where a.fixture_id = any(${idsApi}::int[])`) agendaInfo.set(r.fixture_id, r);
+        for (const r of await sql`
+          select f.fixture_id, coalesce(a.liga_id, f.liga_id, p.liga_id) as liga_id, coalesce(a.temporada, p.temporada) as temporada, l.nombre, l.pais
+          from (select distinct on (fixture_id) fixture_id, liga_id from futbol.fs_partidos
+                where fixture_id = any(${idsApi}::int[]) order by fixture_id, creado desc) f
+          left join futbol.agenda a on a.fixture_id = f.fixture_id
+          left join futbol.partidos p on p.fixture_id = f.fixture_id
+          left join futbol.ligas l on l.id = coalesce(a.liga_id, f.liga_id, p.liga_id)
+          where coalesce(a.liga_id, f.liga_id, p.liga_id) is not null`) agendaInfo.set(r.fixture_id, r);
       }
       const comoApi = (p: FS.PartidoFS, fixtureId: number) => {
         const em = FS.estadoYMinuto(p);
@@ -812,7 +836,9 @@ Deno.serve(async (req) => {
                                 where a.resultado = 'pendiente' and coalesce(l.habilitada, true) and a.ts < now() - interval '150 minutes'
                                 and extract(minute from now()) < 5`)  // como mucho una vez por hora
         .map((r: any) => r.fixture_id);
-      const aResolver = [...new Set([...pend.filter((id: number) => terminados.has(id)), ...viejas])];
+      // Con API-Football apagada no se pregunta nada: las alertas se cierran con Flashscore más abajo (4d).
+      // Los ids negativos (partidos que nacieron en Flashscore) nunca se le preguntan a API-Football.
+      const aResolver = usarApi ? [...new Set([...pend.filter((id: number) => terminados.has(id)), ...viejas])].filter((id) => id > 0) : [];
       if (aResolver.length) await resolverPendientes(await fixturesPorId(aResolver.slice(0, 3)), false);
 
       // 4b. Cierre gratis de los partidos terminados (DECISIONES 32). Antes solo se cerraban los que
@@ -861,8 +887,15 @@ Deno.serve(async (req) => {
                   from futbol.alertas a where a.fixture_id = p.fixture_id and a.id = any(${cerradasExcl.map((r: any) => r.id)}::int[])`;
         log(`alertas de ligas excluidas cerradas con Flashscore: ${cerradasExcl.length}`);
       }
+      // 4d. Cierre de alertas con Flashscore (DECISIONES 42): marcador final + incidencias, sin API-Football.
+      try { resueltas += await resolverConFS(log); } catch (e) { log(`cierre fs: ${(e as Error).message}`); }
 
-      // 5. Favorito con la cuota de APERTURA de las casas colombianas (gratis, una vez por partido)
+      // 5. Favorito con la cuota de APERTURA de las casas colombianas (gratis, una vez por partido).
+      // Primero la agenda: si la cuota ya se pidió antes del partido (cicloAgendaFS), se copia sin consultar.
+      try {
+        const copiados = await favoritosDesdeAgenda(idsVivosFS);
+        if (copiados.length) log(`favorito desde la agenda: ${copiados.length} partidos`);
+      } catch (e) { log(`favorito agenda: ${(e as Error).message}`); }
       await cargarInfo(idsVivosFS);
       let cupoCuotas = Number(cfg.fs_cuotas_por_ciclo ?? 8);
       for (const f of enVivo) {
@@ -923,7 +956,13 @@ Deno.serve(async (req) => {
         }
       }
       await detallarCandidatos(candidatosFS, conStatsFS);
-      // La foto incluye también los partidos en vivo de Flashscore que no tienen pareja en API-Football:
+      // 7. Agenda de hoy y mañana con sus favoritos (DECISIONES 42). Al final: lo en vivo va primero.
+      if (!usarApi && (enHorario || forzar)) {
+        try { await cicloAgendaFS({ cfg, hoyLista: listaCruda, regla, log }); }
+        catch (e) { log(`agenda fs: ${(e as Error).message}`); }
+      }
+      // Desde DECISIONES 42 casi no debería haber: todo partido en vivo recibe id propio. Solo quedan aquí
+      // los que no se pudieron registrar (p. ej. falló la base al crear la liga). Antes eran los sin pareja en API-Football:
       // así la lista del Radar suma lo mismo que el conteo `vivos`. No se pueden evaluar (sin fixture
       // no hay cuota en vivo), por eso van con motivo "sin_cruce".
       const enLista = new Set(enVivo.map((f) => f.__fs.id));

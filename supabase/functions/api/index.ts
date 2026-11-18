@@ -176,7 +176,7 @@ async function ligasHabilitadas() {
   const alias = await sql`select distinct f.liga from futbol.fs_partidos f join futbol.partidos p using (fixture_id)
                           join futbol.ligas l on l.id = p.liga_id where l.habilitada and f.liga is not null`;
   for (const a of alias) nombres.add(claveFS(a.liga));
-  return (j: any) => Number(j?.lg) > 0
+  return (j: any) => Number(j?.lg) !== 0 && Number.isFinite(Number(j?.lg))   // lg negativo = liga creada desde Flashscore
     ? ids.has(Number(j.lg))
     : nombres.has(`${String(j?.liga ?? "").toLowerCase()}|${String(j?.pais ?? "").toLowerCase()}`);
 }
@@ -196,6 +196,32 @@ async function widget() {
   // vivos se cuenta sobre la lista ya filtrada (el conteo guardado incluye todas las ligas)
   const vivos = partidos.filter((p: any) => ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(p.e)).length;
   return { ts: u.ts, vivos, candidatos: partidos.filter((p: any) => p.c).length, partidos };
+}
+
+// Agenda de hoy y mañana con sus favoritos (DECISIONES 42). Sale de Flashscore: la lista del día y las
+// cuotas prepartido (apertura promedio de las casas colombianas) que el escáner pide de a poco.
+async function agenda() {
+  const [cfg] = await sql`select (valor #>> '{}')::numeric as v from futbol.config where clave = 'cuota_fav_max'`;
+  const max = Number(cfg?.v ?? 2);
+  const filas = await sql`select fixture_id, kickoff, dia_co, local, visitante, liga, pais, favorito, cuota_fav,
+                                 cuota_pre_local, cuota_pre_empate, cuota_pre_visitante, casas, cuota_pre_consultada
+                          from futbol.v_agenda_favoritos where dia_co <= (now() at time zone 'America/Bogota')::date + 1
+                          order by kickoff`;
+  const hoy = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  const dias: Record<string, any> = {};
+  for (const f of filas) {
+    const d = String(f.dia_co instanceof Date ? f.dia_co.toISOString().slice(0, 10) : f.dia_co).slice(0, 10);
+    const k = d === hoy ? "hoy" : "manana";
+    const g = (dias[k] ??= { fecha: d, total: 0, con_cuota: 0, pendientes: 0, favoritos: [] as any[] });
+    g.total++;
+    if (!f.cuota_pre_consultada) g.pendientes++;
+    else if (f.cuota_fav !== null) g.con_cuota++;
+    if (f.cuota_fav !== null && Number(f.cuota_fav) <= max) {
+      g.favoritos.push({ id: f.fixture_id, kickoff: f.kickoff, local: f.local, visitante: f.visitante, liga: f.liga, pais: f.pais,
+        fav: f.favorito, cf: Number(f.cuota_fav), c1: f.cuota_pre_local, cx: f.cuota_pre_empate, c2: f.cuota_pre_visitante, casas: f.casas });
+    }
+  }
+  return { cuota_fav_max: max, hoy: dias.hoy ?? null, manana: dias.manana ?? null };
 }
 
 // Pestaña Radar. No llama a API-Football: lee la foto que el escáner guardó en su último barrido.
@@ -634,7 +660,7 @@ const cacheFicha = new Map<string, { t: number; d: any }>();
 async function fichaPartido(idPedido: string, conCrudo: boolean) {
   let fsId: string | null = null, fixtureId: number | null = null;
   if (idPedido.startsWith("fs:")) fsId = idPedido.slice(3).replace(/[^A-Za-z0-9]/g, "") || null;
-  else if (/^\d+$/.test(idPedido)) fixtureId = Number(idPedido);
+  else if (/^-?\d+$/.test(idPedido)) fixtureId = Number(idPedido);   // negativo = partido que nació en Flashscore
   if (!fsId && !fixtureId) return { error: "partido no válido" };
 
   const [fsRow] = fixtureId
@@ -722,6 +748,7 @@ Deno.serve(async (req) => {
       if (ruta === "/resumen") return json(await resumen());
       if (ruta === "/alertas") return json(await alertas(yo));
       if (ruta === "/radar") return json(await radar());
+      if (ruta === "/agenda") return json(await agenda());
       if (ruta === "/partido") {
         // ?crudo=1 (solo admin): texto crudo de Flashscore para revisar el formato de las incidencias
         const crudo = url.searchParams.get("crudo") === "1" && (abierto || yo?.rol === "admin");
