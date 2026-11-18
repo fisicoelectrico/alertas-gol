@@ -87,6 +87,25 @@ export function textoMonto(d: Destinatario, cuota: number | null, casa: string |
     (m.tope ? ` (tope ${maxPct} % de tu banca)` : ` (${String(d.ganancia_pct).replace(".", ",")} % de tu banca)`);
 }
 
+// ---------- Formato de la entrada (Fredy, 18 nov) ----------
+// Una línea por dato, en este orden: país, competencia, partido, mercado, monto (si la persona fijó banca y
+// meta en Mi banca) y casas con su cuota (de mayor a menor). El título dice qué clase de aviso es.
+export function lineasEntrada(o: {
+  pais: string | null; liga: string | null; partido: string; mercado: string;
+  d: Destinatario; casas: { casa: string; c: number }[]; cuotaMonto: number | null; casaMonto: string | null; maxPct: number;
+}): string {
+  const m = montoSugerido(o.d, o.cuotaMonto, o.maxPct);
+  const lineas = [
+    o.pais || null,
+    o.liga || null,
+    o.partido,
+    `Mercado: ${o.mercado}`,
+    m ? `Entra ${pesos(m.monto)}${o.casaMonto ? ` en ${o.casaMonto}` : ""} a ${cuotaTxt(o.cuotaMonto)} → ganas ${pesos(m.gana)}${m.tope ? ` (tope ${o.maxPct} % de tu banca)` : ""}` : null,
+    o.casas.length ? o.casas.map((x) => `${x.casa} ${cuotaTxt(x.c)}`).join(" · ") : null,
+  ];
+  return lineas.filter(Boolean).join("\n");
+}
+
 // ---------- País y liga en cada aviso (Fredy, 15 nov: sin la liga el partido queda "perdido") ----------
 // API-Football escribe el país con guiones ("Costa-Rica"); Flashscore en mayúsculas y con la fase pegada
 // ("COSTA RICA: Liga de Ascenso - Apertura - Play Offs"). Las dos terminan como "Costa Rica · Liga de Ascenso".

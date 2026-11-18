@@ -17,7 +17,7 @@
 // probabilidad real baja; por eso la ventana es corta y la serie de cuotas queda guardada para medirlo.
 // =====================================================================
 import { sql, Config } from "./db.ts";
-import { notificar, textoMonto } from "./notificar.ts";
+import { lineasEntrada, notificar } from "./notificar.ts";
 
 type Log = (s: string) => void;
 export const NOMBRE_LAB: Record<string, { titulo: string; linea: number; texto: string }> = {
@@ -137,12 +137,16 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
       // Monto sugerido con la casa más baja de las que pagan el umbral o más (las demás no tienen valor)
       const validas = casas.filter((x: any) => x.c >= umbral);
       const baja = validas[validas.length - 1];
+      // Formato de Fredy (18 nov): país, competencia, partido, mercado, monto y casas; al final, el porqué
+      const [paisL, ...resto] = String(o.liga ?? "").split(" · ");
       push = await notificar((d) => ({
-        titulo: `🧪 ${L.titulo}${o.liga ? ` · ${o.liga}` : ""}`,
-        cuerpo: `${o.local} ${f.goals.home}–${f.goals.away} ${o.visitante} · min ${min}\n` +
-          `${casas.map((x: any) => `${x.casa} ${coma(x.c)}`).join(" · ")} (umbral ${coma(umbral)})` +
-          `${textoMonto(d, baja.c, baja.casa, Number(cfg.monto_max_pct ?? 10))}\n` +
-          `En la base: ${u?.aciertos ?? "?"} de ${n} con gol antes del ${mGt}'${tramo ? ` que seguían con 1 gol al ${tramo}'` : ""} ${L.texto}.`,
+        titulo: `🧪 ${L.titulo}`,
+        cuerpo: lineasEntrada({
+          pais: resto.length ? paisL : null, liga: resto.length ? resto.join(" · ") : (paisL || null),
+          partido: `${o.local} ${f.goals.home}–${f.goals.away} ${o.visitante} · min ${min}`,
+          mercado: `Más de ${coma(Number(o.linea), 1)} goles (umbral ${coma(umbral)})`,
+          d, casas, cuotaMonto: baja.c, casaMonto: baja.casa, maxPct: Number(cfg.monto_max_pct ?? 10),
+        }) + `\nEn la base: ${u?.aciertos ?? "?"} de ${n}${tramo ? ` que seguían 1 gol al ${tramo}'` : ""} ${L.texto}.`,
         url: "./#laboratorio", tag: `lab-${o.estrategia}-${o.fixture_id}`,
       }), { soloAdmin: true });
     }
