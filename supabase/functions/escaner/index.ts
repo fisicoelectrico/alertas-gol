@@ -646,7 +646,11 @@ Deno.serve(async (req) => {
       // Regla v8 (DECISIONES 40): primero la cuota en vivo de Flashscore (gratis, promedio de las casas
       // colombianas); API-Football solo si Flashscore no tiene esa línea.
       let casasVivo: Record<string, number> | null = null;
-      if ((vale || cfg.cuotas_siempre === true) && cfg.cuota_vivo_fuente === "flashscore" && f0.__fs?.id) {
+      // La de Flashscore se lee también con solo la dominancia (Glasgow City, 18 nov): no gasta consultas
+      // (cicloCuotasVivo ya tomó la foto del candidato este ciclo) y así la tarjeta muestra qué líneas hay
+      // aunque el momentum todavía no exista. No cambia la regla: sin momentum evaluar() no dispara.
+      const verCuotaFS = vale || dominancia >= regla.dominancia_min || cfg.cuotas_siempre === true;
+      if (verCuotaFS && cfg.cuota_vivo_fuente === "flashscore" && f0.__fs?.id) {
         try {
           const c = await cuotaOverFS(f0, linea, cfg, log);
           casasVivo = c.casas;
