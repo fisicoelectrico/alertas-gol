@@ -10,6 +10,7 @@
         android:label="@string/appName"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
+        android:manageSpaceActivity="com.google.androidbrowserhelper.trusted.ManageDataLauncherActivity"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
         <!-- La app declara qué sitio le pertenece. Chrome lo cruza con /.well-known/assetlinks.json del dominio:
@@ -78,6 +79,23 @@
         <!-- Pide el permiso de notificaciones de Android 13+ cuando la página llama Notification.requestPermission(). -->
         <activity android:name="com.google.androidbrowserhelper.trusted.NotificationPermissionRequestActivity" />
         <activity android:name="com.google.androidbrowserhelper.trusted.FocusActivity" />
+        <!-- "Ajustes del sitio": LauncherActivity siempre intenta activar esta pantalla (atajo para borrar datos
+             o cambiar permisos del sitio desde Ajustes de Android). Si no está declarada, la app se cierra al
+             abrir (2.14). Es la misma declaración que trae la plantilla oficial de Bubblewrap. -->
+        <activity android:name="com.google.androidbrowserhelper.trusted.ManageDataLauncherActivity"
+            android:exported="false"
+            android:enabled="true"
+            android:excludeFromRecents="true">
+            <meta-data android:name="android.support.customtabs.trusted.MANAGE_SPACE_URL"
+                android:value="@string/launchUrl" />
+            <intent-filter>
+                <action android:name="android.intent.action.APPLICATION_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <!-- Respaldo si el teléfono no tiene un navegador compatible con TWA. -->
+        <activity android:name="com.google.androidbrowserhelper.trusted.WebViewFallbackActivity"
+            android:configChanges="orientation|screenSize" />
 
         <!-- Comparte con Chrome solo la carpeta twa_splash/ (imagen de arranque); nada más sale de la app. -->
         <provider android:name="androidx.core.content.FileProvider"
