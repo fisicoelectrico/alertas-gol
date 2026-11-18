@@ -13,6 +13,10 @@
 //   umbral   = 1 / ic_bajo   → entrar solo si la casa paga eso o más
 // Se recalcula cada hora y queda un registro por día en futbol.lab_umbrales para graficarlo.
 //
+// Piso por liga (DECISIONES 43): con el promedio de goles de temporada de la liga (futbol.ligas_ref,
+// SoccerStats) se estima por Poisson la probabilidad de los goles que faltan en los minutos que quedan,
+// y se exige la cuota MAYOR entre el umbral de la base y 1 / esa probabilidad. Liga sin referencia → solo la base.
+//
 // Honestidad: la estadística vale justo después del gol. Si pasan los minutos sin otro gol la
 // probabilidad real baja; por eso la ventana es corta y la serie de cuotas queda guardada para medirlo.
 // =====================================================================
@@ -46,6 +50,26 @@ function umbralDe(U: Map<string, any>, estrategia: string, min: number | null) {
   return { u: U.get(estrategia), tramo: null as number | null };
 }
 
+/**
+ * Piso por liga: goles esperados en lo que falta μ = λ·(fin − min)/fin; hacen falta `faltan` goles
+ * (línea 1,5 con 1 gol → 1; línea 2,5 con 1 gol → 2). P(Poisson ≥ faltan) → umbral = 1/P.
+ */
+export function umbralLiga(lambda: number | null, min: number | null, linea: number, goles: number, fin = 95) {
+  if (lambda == null || !Number.isFinite(lambda) || lambda <= 0) return null;
+  const mu = lambda * Math.max(fin - Math.max(min ?? 0, 0), 1) / fin;
+  const faltan = Math.floor(linea) + 1 - goles;
+  if (faltan <= 0) return null;
+  let acum = 0, termino = Math.exp(-mu);
+  for (let k = 0; k < faltan; k++) { acum += termino; termino *= mu / (k + 1); }
+  const p = 1 - acum;
+  return p > 0 ? Math.round((1 / p) * 1000) / 1000 : null;
+}
+
+/** Promedio de goles por liga (futbol.ligas_ref). */
+async function lambdas(): Promise<Map<number, number>> {
+  return new Map((await sql`select liga_id, goles_prom from futbol.ligas_ref`).map((r: any) => [Number(r.liga_id), Number(r.goles_prom)]));
+}
+
 /** Umbrales de hoy; si tienen más de una hora (o no hay), se recalculan desde la base. */
 export async function umbrales(log: Log): Promise<Map<string, any>> {
   let filas = await sql`select * from futbol.lab_umbrales
@@ -65,6 +89,8 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
   const { cfg, vivos, habilitada, log } = opts;
   if (cfg.lab_activo === false) return;
   const U = await umbrales(log);
+  const porLiga = cfg.lab_umbral_liga === false ? new Map<number, number>() : await lambdas();
+  const fin = Number(cfg.lab_liga_min_fin ?? 95);
   const porId = new Map(vivos.map((f) => [f.fixture.id, f]));
   const total = (f: any) => (f.goals.home ?? 0) + (f.goals.away ?? 0);
 
@@ -83,10 +109,11 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
       for (const est of ["gt_o15", "gt_o25"]) {
         const u = U.get(est);
         const r = await sql`insert into futbol.lab_oportunidades (estrategia, fixture_id, fs_id, liga, local, visitante,
-                              minuto_gatillo, goles_gatillo, linea, vence_minuto, n_hist, p_hist, umbral)
+                              minuto_gatillo, goles_gatillo, linea, vence_minuto, n_hist, p_hist, umbral, liga_id, lambda_liga)
                             values (${est}, ${f.fixture.id}, ${f.__fs.id}, ${ligaDe(f)}, ${f.teams.home.name}, ${f.teams.away.name},
                               ${c.minuto}, 1, ${NOMBRE_LAB[est].linea}, ${Number(c.minuto) + (est === "gt_o15" ? ventana : 15)},
-                              ${u?.n ?? null}, ${u?.p ?? null}, ${u?.umbral ?? null})
+                              ${u?.n ?? null}, ${u?.p ?? null}, ${u?.umbral ?? null},
+                              ${f.league?.id ?? null}, ${porLiga.get(Number(f.league?.id)) ?? null})
                             on conflict (fixture_id, estrategia) do nothing returning id`;
         if (r.length) log(`lab: abre ${est} ${f.fixture.id} (gol al ${c.minuto}')`);
       }
@@ -123,7 +150,10 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
     // El umbral vigente (de hoy, del tramo de minuto) manda; si no hay, el que tenía al abrirse.
     // lab_n_min se exige a la estrategia completa; el tramo ya castiga su muestra chica con Wilson.
     const { u, tramo } = umbralDe(U, o.estrategia, min);
-    const umbral = Number(u?.umbral ?? o.umbral);
+    const base = Number(u?.umbral ?? o.umbral);
+    const lambda = porLiga.size ? (porLiga.get(Number(o.liga_id ?? f.league?.id)) ?? null) : null;
+    const uLiga = umbralLiga(lambda, min, Number(o.linea), Number(o.goles_gatillo), fin);
+    const umbral = uLiga != null && Number.isFinite(base) ? Math.max(base, uLiga) : base;
     if (o.alertada || !Number.isFinite(umbral) || mejor.c < umbral) continue;
     const n = Number(u?.n ?? o.n_hist ?? 0);
     const listo = Number(U.get(o.estrategia)?.n ?? o.n_hist ?? 0) >= nMin;
@@ -136,16 +166,17 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
       push = await notificar((d) => ({
         titulo: `🧪 ${L.titulo}${o.liga ? ` · ${o.liga}` : ""}`,
         cuerpo: `${o.local} ${f.goals.home}–${f.goals.away} ${o.visitante} · min ${min}\n` +
-          `${casas.map((x: any) => `${x.casa} ${coma(x.c)}`).join(" · ")} (umbral ${coma(umbral)})` +
+          `${casas.map((x: any) => `${x.casa} ${coma(x.c)}`).join(" · ")} (umbral ${coma(umbral)}${uLiga != null && uLiga > base ? `, piso de la liga: ${coma(lambda!)} goles/partido` : ""})` +
           `${textoMonto(d, baja.c, baja.casa, Number(cfg.monto_max_pct ?? 10))}\n` +
           `En la base: ${u?.aciertos ?? "?"} de ${n} con gol antes del ${mGt}'${tramo ? ` que seguían con 1 gol al ${tramo}'` : ""} ${L.texto}.`,
         url: "./#laboratorio", tag: `lab-${o.estrategia}-${o.fixture_id}`,
       }), { soloAdmin: true });
     }
     await sql`update futbol.lab_oportunidades set alertada = true, ts_alerta = now(), minuto_alerta = ${min},
-                cuota_alerta = ${mejor.c}, casa_alerta = ${mejor.casa}, push_enviados = ${push}, umbral = ${umbral}
+                cuota_alerta = ${mejor.c}, casa_alerta = ${mejor.casa}, push_enviados = ${push}, umbral = ${umbral},
+                umbral_base = ${Number.isFinite(base) ? base : null}, umbral_liga = ${uLiga}, lambda_liga = ${lambda}
               where id = ${o.id}`;
-    log(`lab: ${o.estrategia}${tramo ? `@${tramo}` : ""} ${o.fixture_id} supera umbral ${umbral} con ${mejor.casa} ${mejor.c}${listo ? "" : ` (sin push: ${n} casos < ${nMin})`}, push=${push}`);
+    log(`lab: ${o.estrategia}${tramo ? `@${tramo}` : ""} ${o.fixture_id} supera umbral ${umbral}${uLiga != null ? ` (base ${base}, liga ${uLiga})` : ""} con ${mejor.casa} ${mejor.c}${listo ? "" : ` (sin push: ${n} casos < ${nMin})`}, push=${push}`);
   }
 
   // 3. Resolver: acierto apenas el marcador pasa la línea; fallo/acierto definitivo al terminar
