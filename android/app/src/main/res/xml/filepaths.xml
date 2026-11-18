@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Carpeta donde la TWA guarda la imagen de arranque para pasársela a Chrome (ver FileProvider en el manifiesto). -->
+<paths>
+    <files-path path="twa_splash/" name="twa_splash" />
+</paths>

@@ -35,6 +35,10 @@
                 android:resource="@color/backgroundColor" />
             <meta-data android:name="android.support.customtabs.trusted.SPLASH_SCREEN_FADE_OUT_DURATION"
                 android:value="300" />
+            <!-- La pantalla de arranque se le pasa a Chrome como archivo, a través del FileProvider de abajo.
+                 Sin esta autoridad la app se cerraba al abrir (2.12): Chrome pedía la imagen y no había por dónde dársela. -->
+            <meta-data android:name="android.support.customtabs.trusted.FILE_PROVIDER_AUTHORITY"
+                android:value="com.fredyquiroga.goles.widget.fileprovider" />
             <meta-data android:name="android.support.customtabs.trusted.SCREEN_ORIENTATION"
                 android:value="portrait" />
             <!-- Mantener presionado el ícono: atajo a la pantalla del widget y diagnóstico. -->
@@ -74,6 +78,14 @@
         <!-- Pide el permiso de notificaciones de Android 13+ cuando la página llama Notification.requestPermission(). -->
         <activity android:name="com.google.androidbrowserhelper.trusted.NotificationPermissionRequestActivity" />
         <activity android:name="com.google.androidbrowserhelper.trusted.FocusActivity" />
+
+        <!-- Comparte con Chrome solo la carpeta twa_splash/ (imagen de arranque); nada más sale de la app. -->
+        <provider android:name="androidx.core.content.FileProvider"
+            android:authorities="com.fredyquiroga.goles.widget.fileprovider"
+            android:grantUriPermissions="true"
+            android:exported="false">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/filepaths" />
+        </provider>
 
         <!-- ===== Widget de pantalla de inicio ===== -->
         <!-- Pantalla del widget y diagnóstico (atajo al mantener presionado el ícono). -->
