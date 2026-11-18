@@ -559,6 +559,50 @@ Deno.serve(async (req) => {
   // 8+ minutos anterior, así que este partido ya no puede alertar antes del 85'. No se gasta en él.
   const tarde = (f: any) => !info.get(f.fixture.id)?.con_snap && (f.fixture.status.elapsed ?? 0) > A.limiteTarde(regla);
 
+  // ¿El favorito va perdiendo y todavía no es candidato? (1T, descanso o 2T antes de minuto_min)
+  const enHistorial = (f: any) => {
+    const st = f.fixture.status, minuto = st.elapsed ?? 0;
+    if (!(st.short === "1H" || st.short === "HT" || (st.short === "2H" && minuto < regla.minuto_min))) return false;
+    if (A.esCopa(f.league?.name, regla.patrones_copa)) return false;
+    const p = favs.get(f.fixture.id);
+    if (!p?.favorito || info.get(f.fixture.id)?.habilitada === false) return false;
+    const cuotaFav = p.favorito === "home" ? Number(p.cuota_pre_local) : Number(p.cuota_pre_visitante);
+    if (!(cuotaFav <= regla.cuota_fav_max)) return false;
+    const gl = f.goals.home ?? 0, gv = f.goals.away ?? 0;
+    return (p.favorito === "home" ? gv - gl : gl - gv) >= regla.diferencia_min;
+  };
+
+  const fotosHistorial = async (vivos: any[]) => {
+    const lista = vivos.filter((f) => f.__fs?.id && enHistorial(f));
+    if (!lista.length) return;
+    const ids = lista.map((f) => f.fixture.id);
+    const ult = new Map<number, any>();
+    for (const r of await sql`select distinct on (fixture_id) fixture_id, ts, estado from futbol.historial_stats
+                              where fixture_id = any(${ids}::int[]) order by fixture_id, ts desc`) ult.set(r.fixture_id, r);
+    const intervalo = Number(cfg.historial_intervalo_min ?? 4) * 60000 - 30000;
+    let cupo = Number(cfg.historial_max_ciclo ?? 6), n = 0;
+    for (const f of lista) {
+      const u = ult.get(f.fixture.id);
+      const st = f.fixture.status.short;
+      if (u && st === "HT" && u.estado === "HT") continue;               // al descanso basta una foto
+      if (u && st !== "HT" && Date.now() - new Date(u.ts).getTime() < intervalo) continue;
+      if (cupo-- <= 0) break;
+      try {
+        const e = await FS.estadisticas(f.__fs.id);
+        if (!e.local.length) continue;
+        const sL = A.normalizarStats(e.local), sV = A.normalizarStats(e.visitante);
+        const usarXg = sL.xg !== null && sV.xg !== null;
+        await sql`insert into futbol.historial_stats (fixture_id, estado, minuto, goles_local, goles_visitante,
+                    stats_local, stats_visitante, ip_local, ip_visitante)
+                  values (${f.fixture.id}, ${st}, ${f.fixture.status.elapsed ?? 0}, ${f.goals.home ?? 0}, ${f.goals.away ?? 0},
+                    ${sql.json(sL as any)}, ${sql.json(sV as any)},
+                    ${A.indicePresion(sL, regla.pesos_ip, usarXg).toFixed(2)}, ${A.indicePresion(sV, regla.pesos_ip, usarXg).toFixed(2)})`;
+        n++;
+      } catch (e) { log(`historial fs ${f.__fs.id}: ${(e as Error).message}`); }
+    }
+    if (n) log(`historial: ${n} fotos (${lista.length} favoritos perdiendo antes de ser candidatos)`);
+  };
+
   /**
    * Detalle de los candidatos. `conStats` trae los fixtures de /fixtures?id (con estadísticas
    * adentro). Si no viene, se piden aquí (1 consulta por candidato).
@@ -622,10 +666,18 @@ Deno.serve(async (req) => {
       const dominancia = A.razon(pFav, pRiv);
 
       // Momentum: delta contra el snapshot más cercano a (minuto − ventana), con separación ≥ gap
+      // DECISIONES 44: también vale una foto de historial (tomada desde el gol, antes de ser candidato).
+      // Una foto del 1T (minuto ≤ 45) cuenta como anterior a cualquier minuto del 2T.
       const [prev] = await sql`
-        select minuto, stats_local, stats_visitante from futbol.snapshots
-        where fixture_id = ${id} and stats_local is not null and minuto <= ${minuto - regla.momentum_gap_min}::int
-        order by abs(minuto - ${minuto - regla.momentum_ventana_min}::int) limit 1`;
+        select minuto, stats_local, stats_visitante, fuente from (
+          select minuto, stats_local, stats_visitante, 'snapshot' as fuente from futbol.snapshots
+          where fixture_id = ${id} and stats_local is not null
+          union all
+          select minuto, stats_local, stats_visitante, 'historial' from futbol.historial_stats
+          where fixture_id = ${id} and ${cfg.historial_desde_gol !== false}::boolean
+        ) x
+        where minuto <= ${minuto - regla.momentum_gap_min}::int
+        order by abs(minuto - ${minuto - regla.momentum_ventana_min}::int), (fuente = 'snapshot') desc limit 1`;
       let momentum: number | null = null;
       if (prev) {
         const dL = A.deltaStats(sL, prev.stats_local), dV = A.deltaStats(sV, prev.stats_visitante);
@@ -646,7 +698,11 @@ Deno.serve(async (req) => {
       // Regla v8 (DECISIONES 40): primero la cuota en vivo de Flashscore (gratis, promedio de las casas
       // colombianas); API-Football solo si Flashscore no tiene esa línea.
       let casasVivo: Record<string, number> | null = null;
-      if ((vale || cfg.cuotas_siempre === true) && cfg.cuota_vivo_fuente === "flashscore" && f0.__fs?.id) {
+      // La de Flashscore se lee también con solo la dominancia (Glasgow City, 18 nov): no gasta consultas
+      // (cicloCuotasVivo ya tomó la foto del candidato este ciclo) y así la tarjeta muestra qué líneas hay
+      // aunque el momentum todavía no exista. No cambia la regla: sin momentum evaluar() no dispara.
+      const verCuotaFS = vale || dominancia >= regla.dominancia_min || cfg.cuotas_siempre === true;
+      if (verCuotaFS && cfg.cuota_vivo_fuente === "flashscore" && f0.__fs?.id) {
         try {
           const c = await cuotaOverFS(f0, linea, cfg, log);
           casasVivo = c.casas;
@@ -673,7 +729,8 @@ Deno.serve(async (req) => {
         values (${id}, ${minuto}, ${gl}, ${gv}, ${sql.json(sL as any)}, ${sql.json(sV as any)},
           ${ipL.toFixed(2)}, ${ipV.toFixed(2)}, ${dominancia.toFixed(3)}, ${momentum?.toFixed(3) ?? null},
           ${linea}, ${cuotaOver.cuota}, ${regla.version},
-          ${sql.json({ ...ev.condiciones, mercado: cuotaOver.mercado, lineas: cuotaOver.lineas, casas: casasVivo, usar_xg: usarXg, fuente_stats: fuenteStats } as any)},
+          ${sql.json({ ...ev.condiciones, mercado: cuotaOver.mercado, lineas: cuotaOver.lineas, casas: casasVivo, usar_xg: usarXg, fuente_stats: fuenteStats,
+                       momentum_base: prev ? { minuto: prev.minuto, fuente: prev.fuente } : null } as any)},
           ${sql.json({ statistics: equipos, odds: rOdds?.response ?? null, fixture: { ...f, statistics: undefined, players: undefined, lineups: undefined } } as any)})
         returning id`;
       // Para la pestaña Radar: si se pidió la cuota en vivo y no vino el mercado, es un hueco de cobertura
@@ -903,7 +960,8 @@ Deno.serve(async (req) => {
         if (!i?.habilitada || i.cuota_pre_consultada) continue;
         const st = f.fixture.status;
         if (st.short === "2H" && (st.elapsed ?? 0) > A.limiteTarde(regla)) continue;
-        if (!A.preCandidato(st.short, st.elapsed ?? 0, f.goals.home, f.goals.away, regla)) continue;
+        const golEn1T = cfg.historial_desde_gol !== false && st.short === "1H" && f.goals.home !== f.goals.away;
+        if (!golEn1T && !A.preCandidato(st.short, st.elapsed ?? 0, f.goals.home, f.goals.away, regla)) continue;
         if (cupoCuotas-- <= 0) break;
         const p: FS.PartidoFS = f.__fs;
         let c: FS.CuotasFS | null = null;
@@ -935,6 +993,13 @@ Deno.serve(async (req) => {
         (detalle as any).fs_vivo = r;
         await cicloLab({ cfg, vivos: enVivo, habilitada: hab, log });
       } catch (e) { log(`cuotas vivo/lab: ${(e as Error).message}`); }
+
+      // 5d. Historial desde el gol (DECISIONES 44): si el favorito va perdiendo antes de ser candidato (1T,
+      // descanso o el arranque del 2T), se guardan fotos de estadísticas cada historial_intervalo_min. No es
+      // candidato ni alerta: solo le da al momentum una foto anterior para que exista desde el 46'.
+      if (cfg.historial_desde_gol !== false) {
+        try { await fotosHistorial(enVivo); } catch (e) { log(`historial: ${(e as Error).message}`); }
+      }
 
       // 6. Candidatos y detalle: estadísticas de Flashscore (gratis); cuota en vivo desde Flashscore (API de respaldo)
       const filtradosFS = enVivo.filter(esCandidato);

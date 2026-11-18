@@ -129,6 +129,23 @@ function spark(serie, umbral) {
     <div class="spark-pie"><span>${x0}'</span><span>Dominancia · umbral ${n(umbral)}</span><span>${x1}'</span></div>`;
 }
 
+// Por qué falta el momentum o la cuota (Glasgow City, 18 nov): un guion solo no explica nada.
+function notasFaltantes(p, s, ev, cfg) {
+  const out = [];
+  if (s.dominancia != null && s.momentum == null) {
+    const m0 = Number((p.serie || [])[0]?.minuto ?? s.minuto);
+    const gap = Number(cfg.momentum_gap_min) || 8;
+    out.push(`Momentum: necesita una foto de estadísticas de hace ${gap}+ min. La primera fue al ${m0}', así que aparece desde el ${m0 + gap}'.`);
+  }
+  if (s.dominancia != null && s.cuota_over == null) {
+    const ls = Object.entries(ev.lineas || {}).sort((a, b) => Number(a[0]) - Number(b[0]));
+    out.push(ls.length
+      ? `Las casas no ofrecen Over ${s.linea_over} en este partido. Sí hay: ${ls.map(([l, c]) => `Over ${l} a ${n(c)}`).join(" · ")}.`
+      : `Sin cuota en vivo de Over ${s.linea_over} en las casas colombianas.`);
+  }
+  return out.length ? `<p class="nota">${out.map(esc).join("<br>")}</p>` : "";
+}
+
 function tarjetaPartido(p, cfg) {
   const s = (p.serie || [])[p.serie ? p.serie.length - 1 : 0] || {};
   const ev = s.evaluacion || {};
@@ -149,6 +166,7 @@ function tarjetaPartido(p, cfg) {
       <div class="metrica ${cls(ev.momentum)}"><span>Momentum</span><b>${n(s.momentum)}</b></div>
       <div class="metrica ${cls(ev.cuota)}"><span>Over ${s.linea_over ?? "–"}</span><b>${n(s.cuota_over)}</b></div>
     </div>
+    ${notasFaltantes(p, s, ev, cfg)}
     ${spark(p.serie, Number(cfg.dominancia_min) || 1.3)}
     ${p.alerta ? `<p class="aviso">Alerta enviada al ${p.alerta.minuto}' con cuota ${n(p.alerta.cuota)} · ${esc(p.alerta.resultado)}</p>` : ""}
   </article>`;
