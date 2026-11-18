@@ -12,7 +12,7 @@
 //  4. Resultado:     si no hubo gol, "No hubo gol" al resolver. Si hubo y ya se avisó, no se repite.
 // =====================================================================
 import { sql, Config } from "./db.ts";
-import { cuotaTxt, Destinatario, ligaTxt, notificar, pesos, textoMonto } from "./notificar.ts";
+import { cuotaTxt, Destinatario, ligaTxt, lineasEntrada, notificar, pesos } from "./notificar.ts";
 
 const favDe = (a: any): string =>
   a.favorito === "home" ? a.local : a.favorito === "away" ? a.visitante : a.local;
@@ -29,16 +29,23 @@ export async function avisoAlerta(alertaId: number) {
                             and ts > now() - interval '6 minutes'
                           order by casa_id, ts desc`;
   casas.sort((x: any, y: any) => Number(y.cuota_over) - Number(x.cuota_over));
-  const porCasa = casas.map((c: any) => `${c.casa} ${cuotaTxt(c.cuota_over)}`).join(" · ");
   // Monto sugerido con la casa que paga MENOS (Fredy, 18 nov: lo prudente); sin casas, la cuota de la alerta
   const baja = casas.length ? casas[casas.length - 1] : null;
   const cuotaBaja = baja ? Number(baja.cuota_over) : Number(a.cuota);
   const [mx] = await sql`select (valor #>> '{}')::numeric as v from futbol.config where clave = 'monto_max_pct'`;
   const maxPct = Number(mx?.v ?? 10);
+  // Formato de Fredy (18 nov): país, competencia, partido, mercado, monto y casas, una línea cada uno
+  const pais = (a.pais ?? "").replace(/-/g, " ").trim();
+  const listaCasas = casas.map((c: any) => ({ casa: c.casa, c: Number(c.cuota_over) }));
+  if (!listaCasas.length && a.cuota) listaCasas.push({ casa: "Promedio", c: Number(a.cuota) });
   return await notificar((d) => ({
-    titulo: ligaTxt(a.pais, a.liga),
-    cuerpo: `Alerta en vivo: ${a.local} ${gl ?? "?"}–${gv ?? "?"} ${a.visitante}, minuto ${a.minuto}. ${favDe(a)} es favorito, va perdiendo y ataca mucho. Otro gol paga ${cuotaTxt(a.cuota)}.` +
-      `${porCasa ? `\n${porCasa}` : ""}${textoMonto(d, cuotaBaja, baja?.casa ?? null, maxPct)}`,
+    titulo: `⚽ Entrada sugerida · ${favDe(a)} ataca`,
+    cuerpo: lineasEntrada({
+      pais: pais && pais.toLowerCase() !== "world" ? pais : null, liga: a.liga,
+      partido: `${a.local} ${gl ?? "?"}–${gv ?? "?"} ${a.visitante} · min ${a.minuto}`,
+      mercado: `Más de ${String(a.linea_over).replace(".", ",")} goles (otro gol)`,
+      d, casas: listaCasas, cuotaMonto: cuotaBaja, casaMonto: baja?.casa ?? null, maxPct,
+    }),
     url: "./#ahora", tag: `alerta-${a.id}`, alerta_id: a.id, acciones: true,
   }), { alertaId: a.id });
 }

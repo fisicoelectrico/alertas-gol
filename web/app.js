@@ -608,7 +608,9 @@ const pantallas = {
       $("#btn-olvidar")?.addEventListener("click", () => { localStorage.removeItem("pin"); toast("PIN borrado de este dispositivo"); });
     });
 
-    return `<div class="titulo-seccion"><h2>Notificaciones</h2></div>
+    // Meta de ganancia (monto sugerido, DECISIONES 41): es personal y vive en Mi banca; aquí, el acceso directo
+    return `<a class="tarjeta control-item" href="#banca"><b>Mi meta de ganancia</b><small>Banca y % que quieres ganar por entrada: con eso cada aviso te dice cuánto entrar</small><span aria-hidden="true">›</span></a>
+      <div class="titulo-seccion"><h2>Notificaciones</h2></div>
       <div class="tarjeta">
         <p>${esc(push.texto)}</p>
         <div class="botones">
