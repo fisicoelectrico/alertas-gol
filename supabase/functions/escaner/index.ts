@@ -45,6 +45,8 @@ import { notificar } from "../_shared/notificar.ts";
 import { avisoAlerta, avisoResultado, avisosEnVivo } from "../_shared/avisos.ts";
 import * as FS from "../_shared/flashscore.ts";
 import { cicloCorners } from "../_shared/corners.ts";
+import { cicloCuotasVivo, cuotaOverFS, salud } from "../_shared/cuotasvivo.ts";
+import { cicloLab, vigilados } from "../_shared/lab.ts";
 
 const json = (d: unknown, status = 200) =>
   new Response(JSON.stringify(d, null, 2), { status, headers: { "Content-Type": "application/json" } });
@@ -265,8 +267,9 @@ Deno.serve(async (req) => {
   const ahora = new Date();
   // Observados (DECISIONES 32): ex candidatos que siguen en vivo. Ya no se evalúan, pero se mira su
   // marcador al ritmo rápido para saber si hubo un gol más y en qué minuto (Flashscore, sin cuota).
-  const [{ cand: nCandidatos, pend: nPendientes, obs: nObservados }] = await sql`
+  const [{ cand: nCandidatos, pend: nPendientes, obs: nObservados, lab: nLab }] = await sql`
     select (select count(*)::int from futbol.partidos where seguimiento) as cand,
+           (select count(*)::int from futbol.lab_oportunidades where vigilando) as lab,
            (select count(distinct a.fixture_id)::int from futbol.alertas a join futbol.partidos p using (fixture_id)
              left join futbol.ligas l on l.id = p.liga_id
              where a.resultado = 'pendiente' and coalesce(l.habilitada, true)) as pend,
@@ -366,9 +369,9 @@ Deno.serve(async (req) => {
   // Modo FS con dos ritmos: sin candidatos basta con mirar la lista cada intervalo_fs_min (5);
   // con candidatos el ciclo corre cada intervalo_fs_seg_min (2) para tener snapshots de
   // estadísticas más seguidos (Flashscore no gasta cuota). La cuota en vivo tiene su propio tope.
-  const intervaloFS = nCandidatos + nObservados > 0 ? Number(cfg.intervalo_fs_seg_min ?? 2) : Number(cfg.intervalo_fs_min ?? 5);
+  const intervaloFS = nCandidatos + nObservados + nLab > 0 ? Number(cfg.intervalo_fs_seg_min ?? 2) : Number(cfg.intervalo_fs_min ?? 5);
   if (modoFS) {
-    if ((enHorario || forzar || nCandidatos > 0 || nPendientes > 0 || nObservados > 0) &&
+    if ((enHorario || forzar || nCandidatos > 0 || nPendientes > 0 || nObservados > 0 || nLab > 0) &&
         await reservar("ultimo_fs", forzar ? 0.5 : intervaloFS)) modo = "fs";
   } else if ((enHorario || forzar) && radarUtil && await reservar("ultimo_radar", intervaloRadar)) modo = "radar";
   else if ((nCandidatos > 0 || nPendientes > 0) && await reservar("ultimo_seguimiento", intervaloSeg)) modo = "seguimiento";
@@ -629,7 +632,17 @@ Deno.serve(async (req) => {
       const [cuotaReciente] = await sql`select 1 from futbol.snapshots where fixture_id = ${id} and cuota_over is not null
         and ts > now() - make_interval(secs => ${Number(cfg.intervalo_cuota_min ?? 3) * 60 - 30}::float8) limit 1`;
       if (cuotaReciente) log(`cuota ${id}: tope, la última tiene menos de ${cfg.intervalo_cuota_min ?? 3} min`);
-      if ((vale || cfg.cuotas_siempre === true) && !cuotaReciente && api.quedan() > 0) {
+      // Regla v8 (DECISIONES 40): primero la cuota en vivo de Flashscore (gratis, promedio de las casas
+      // colombianas); API-Football solo si Flashscore no tiene esa línea.
+      let casasVivo: Record<string, number> | null = null;
+      if ((vale || cfg.cuotas_siempre === true) && cfg.cuota_vivo_fuente === "flashscore" && f0.__fs?.id) {
+        try {
+          const c = await cuotaOverFS(f0, linea, cfg, log);
+          casasVivo = c.casas;
+          if (c.cuota !== null || c.suspendida) cuotaOver = { linea, cuota: c.cuota, suspendida: c.suspendida, mercado: c.mercado, lineas: c.lineas };
+        } catch (e) { log(`cuota fs ${id}: ${(e as Error).message}`); }
+      }
+      if ((vale || cfg.cuotas_siempre === true) && cuotaOver.cuota === null && !cuotaOver.suspendida && !cuotaReciente && api.quedan() > 0) {
         rOdds = await api.get("/odds/live", { fixture: id });
         cuotaOver = A.parsearCuotaOver(rOdds, linea);
         if (!p.cuota_vivo_probada) {
@@ -649,7 +662,7 @@ Deno.serve(async (req) => {
         values (${id}, ${minuto}, ${gl}, ${gv}, ${sql.json(sL as any)}, ${sql.json(sV as any)},
           ${ipL.toFixed(2)}, ${ipV.toFixed(2)}, ${dominancia.toFixed(3)}, ${momentum?.toFixed(3) ?? null},
           ${linea}, ${cuotaOver.cuota}, ${regla.version},
-          ${sql.json({ ...ev.condiciones, mercado: cuotaOver.mercado, lineas: cuotaOver.lineas, usar_xg: usarXg, fuente_stats: fuenteStats } as any)},
+          ${sql.json({ ...ev.condiciones, mercado: cuotaOver.mercado, lineas: cuotaOver.lineas, casas: casasVivo, usar_xg: usarXg, fuente_stats: fuenteStats } as any)},
           ${sql.json({ statistics: equipos, odds: rOdds?.response ?? null, fixture: { ...f, statistics: undefined, players: undefined, lineups: undefined } } as any)})
         returning id`;
       // Para la pestaña Radar: si se pidió la cuota en vivo y no vino el mercado, es un hueco de cobertura
@@ -706,7 +719,15 @@ Deno.serve(async (req) => {
     if (modo === "fs") {
       // ================= CICLO FLASHSCORE (regla v4) =================
       // 1. Lista del día (gratis). Copas fuera por nombre, igual que en v3.
-      const listaFS = (await FS.listaDia(0)).filter((p) => !A.esCopa(p.liga, regla.patrones_copa));
+      // Si Flashscore no responde, cuenta para el aviso al administrador (DECISIONES 40) y el ciclo cae como antes.
+      let listaCruda: FS.PartidoFS[];
+      try { listaCruda = await FS.listaDia(0); }
+      catch (e) {
+        await salud(cfg, "lista", false, (e as Error).message, log).catch(() => {});
+        throw e;
+      }
+      await salud(cfg, "lista", true, "", log).catch((e) => log(`fs salud: ${(e as Error).message}`));
+      const listaFS = listaCruda.filter((p) => !A.esCopa(p.liga, regla.patrones_copa));
       const vivosFS = listaFS.filter((p) => p.estado === 2 || p.estado === 3);
       vivos = listaFS.filter((p) => p.estado === 2).length;
 
@@ -870,7 +891,19 @@ Deno.serve(async (req) => {
       try { await cicloCorners({ cfg, vivosFS, conocidos, api, log }); }
       catch (e) { log(`córners: ${(e as Error).message}`); }
 
-      // 6. Candidatos y detalle: estadísticas de Flashscore (gratis); cuota en vivo con API-Football
+      // 5c. Cuotas en vivo de Flashscore (DECISIONES 40): foto en cada gol, en el laboratorio cada 2 min,
+      // al descanso, candidatos cada 2 min y el resto cada 10, con tope de consultas. Luego el laboratorio
+      // de goles compara la mejor cuota con el umbral calculado desde la base. Aislado: si falla, el radar sigue.
+      try {
+        const hab = (id: number) => info.get(id)?.habilitada !== false;
+        const lab = await vigilados();
+        const r = await cicloCuotasVivo({ cfg, enVivo, habilitada: hab, candidatos: new Set(enVivo.filter(esCandidato).map((f) => f.fixture.id)), lab, log });
+        if (r.consultas) log(`fs vivo: ${r.fotos} fotos, ${r.consultas} consultas, ${r.errores} errores`);
+        (detalle as any).fs_vivo = r;
+        await cicloLab({ cfg, vivos: enVivo, habilitada: hab, log });
+      } catch (e) { log(`cuotas vivo/lab: ${(e as Error).message}`); }
+
+      // 6. Candidatos y detalle: estadísticas de Flashscore (gratis); cuota en vivo desde Flashscore (API de respaldo)
       const filtradosFS = enVivo.filter(esCandidato);
       for (const f of filtradosFS) if (tarde(f)) resultadoDetalle.set(f.fixture.id, "tarde" as any);
       const candidatosFS = filtradosFS.filter((f) => !tarde(f) && Number(info.get(f.fixture.id)?.sin_stats ?? 0) < 2)

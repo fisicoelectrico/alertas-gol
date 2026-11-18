@@ -356,3 +356,39 @@ export async function incidencias(id: string): Promise<{ lista: IncidenciaFS[]; 
   }
   return { lista, crudo: t.slice(0, 3000) };
 }
+
+// ---------------- Cuotas EN VIVO (DECISIONES 40) ----------------
+// La consulta `oce` de arriba devuelve la cuota de antes del partido aunque el partido esté en vivo
+// (verificado el 18 nov 2026: no cambia con los goles y sigue ofreciendo "más de 0,5" con 1-0).
+// Las cuotas en directo que muestra la pestaña Resumen salen de otro servidor y otra consulta:
+//   GET https://2.ds.lsapp.eu/pq_graphql?_hash=ole2&eventId={id}&bookmakerId={casa}&betType=OVER_UNDER&betScope=FULL_TIME
+// (hash en HashQueries.*.js de Flashscore: ODDS_EVENT_LIVE_2 = "ole2"; parámetros en la clase que lo usa).
+// Es una consulta por casa y por mercado, así que el escáner pide pocas casas y con tope por ciclo.
+const LIVE = "https://2.ds.lsapp.eu/pq_graphql";
+const CABECERAS_VIVO = {
+  "Referer": "https://www.flashscore.com/", "Origin": "https://www.flashscore.com",
+  "User-Agent": CABECERAS["User-Agent"], "Accept": "*/*",
+};
+/** Casas colombianas que Flashscore muestra en vivo (ids de Flashscore). */
+export const CASAS_CO: Record<number, string> = { 523: "Wplay", 1097: "Betano", 1197: "Stake", 598: "Bwin", 843: "Luckia" };
+
+export interface LineaVivo { linea: number; over: number | null; under: number | null; activa: boolean }
+
+/** Líneas Más/Menos de tiempo completo de una casa, en vivo. null = la casa no tiene oferta en vivo. */
+export async function overVivo(id: string, casa: number): Promise<LineaVivo[] | null> {
+  const url = `${LIVE}?_hash=ole2&eventId=${encodeURIComponent(id)}&bookmakerId=${casa}&betType=OVER_UNDER&betScope=FULL_TIME`;
+  const r = await fetch(url, { headers: CABECERAS_VIVO, signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(`flashscore vivo ${r.status}`);
+  const j = await r.json();
+  if (j?.errors?.length) throw new Error(`flashscore vivo: ${JSON.stringify(j.errors).slice(0, 120)}`);
+  const ov = j?.data?.findLiveOddsForBookmaker?.eventOddsOverview;
+  if (!ov) return null;
+  const num = (x: unknown) => { const v = parseFloat(String(x)); return Number.isFinite(v) && v > 1 ? v : null; };
+  const out: LineaVivo[] = [];
+  for (const o of ov.opportunities ?? []) {
+    const l = parseFloat(o?.handicap?.value);
+    if (!Number.isFinite(l)) continue;
+    out.push({ linea: l, over: num(o?.over?.value), under: num(o?.under?.value), activa: o?.over?.active !== false });
+  }
+  return out;
+}

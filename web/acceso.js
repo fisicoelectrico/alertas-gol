@@ -471,9 +471,27 @@ Object.assign(pantallas, {
         try { await post("/mi-banca", { banca_inicial: v.replace(/\D/g, "") || null }); YO.banca_inicial = Number(v.replace(/\D/g, "")) || null; navegar(true); }
         catch (e) { toast(e.message); }
       });
+      $("#btn-meta")?.addEventListener("click", async () => {
+        const v = prompt("¿Qué % de tu banca quieres ganar en cada entrada? (ej. 1). Vacío = sin monto sugerido", b.ganancia_pct ?? "");
+        if (v === null) return;
+        try { await post("/mi-banca", { ganancia_pct: v.trim() || null }); navegar(true); }
+        catch (e) { toast(e.message); }
+      });
       $("#btn-tutorial")?.addEventListener("click", () => mostrarTutorial());
       $("#btn-push")?.addEventListener("click", activarPush);
     });
+    // Monto sugerido (DECISIONES 41): monto = banca × % / (cuota − 1), tope monto_max_pct % de la banca
+    const sugerido = (c) => {
+      const ideal = b.banca_actual * b.ganancia_pct / 100 / (c - 1), techo = b.banca_actual * b.monto_max_pct / 100;
+      return Math.max(Math.round(Math.min(ideal, techo) / 100) * 100, 100);
+    };
+    const meta = b.banca_inicial == null ? "" : b.ganancia_pct
+      ? `<div class="tarjeta"><div class="fila"><span><b>Monto sugerido</b></span><b class="num">${String(b.ganancia_pct).replace(".", ",")} % por entrada</b></div>
+          <p class="nota" style="margin-top:4px">Cada aviso te dice cuánto entrar en la casa que paga menos para ganar ${String(b.ganancia_pct).replace(".", ",")} % de tu banca (${pesos(b.banca_actual * b.ganancia_pct / 100)}).
+          Con tu banca de hoy: cuota 1,30 → ${pesos(sugerido(1.3))} · 1,50 → ${pesos(sugerido(1.5))} · 2,00 → ${pesos(sugerido(2))}. Nunca más del ${b.monto_max_pct} % de la banca.</p>
+          <div class="fila nota"><span></span><button class="btn-texto" id="btn-meta">Cambiar %</button></div></div>`
+      : `<div class="tarjeta"><p>¿Quieres que cada aviso te diga cuánto entrar? Elige qué % de tu banca quieres ganar por entrada.</p>
+          <button class="btn sec" id="btn-meta">Elegir mi %</button></div>`;
     // Curva de la banca (solo entradas con monto, en orden de tiempo)
     const conMonto = b.movimientos.filter((m) => m.decision === "entre" && m.monto && m.ganancia != null).reverse();
     let curva = "";
@@ -506,6 +524,7 @@ Object.assign(pantallas, {
         </div>`
       : `<div class="tarjeta banca-top"><p>¿Quieres llevar tu plata en pesos? Es opcional: sin eso igual calculamos tu yield.</p>
           <button class="btn sec" id="btn-banca">Escribir con cuánto empecé</button></div>`}
+      ${meta}
       <div class="tarjeta yields">
         <div><small>Tu yield</small><b class="num ${y.yield_pct >= 0 ? "pos" : "neg"}">${pct(y.yield_pct)}</b><span>${y.cerradas} cerrada${y.cerradas === 1 ? "" : "s"} · ${y.aciertos} ${y.aciertos === 1 ? "salió" : "salieron"}</span></div>
         <div><small>Radar entrando en todas</small><b class="num ${r.yield_pct >= 0 ? "pos" : "neg"}">${pct(r.yield_pct)}</b><span>${r.cerradas} desde que llegaste</span></div>
@@ -536,7 +555,150 @@ Object.assign(pantallas, {
       ${item("rendimiento", "Rendimiento técnico", "Acierto vs implícita, por regla y por liga")}
       ${item("ligas", "Ligas", "Encender y apagar ligas")}
       ${item("ajustes", "Ajustes del algoritmo", "Umbrales, horario, presupuesto de API, notificaciones")}
+      ${item("laboratorio", "Laboratorio", "Umbral de entrada automático, cuotas en vivo y gráficas (goles y córners)")}
       ${item("corners", "Córners (laboratorio)", "Avisos de córners solo para ti y su acierto vs cuota")}`;
+  },
+
+  // ---------- Laboratorio (DECISIONES 40): umbral automático y gráficas, solo administrador ----------
+  async laboratorio() {
+    const r = await conPin((pin) => post("/admin/laboratorio", { pin }));
+    if (!r) return `<div class="tarjeta vacio"><strong>Necesitas ser administrador</strong>Abre tu enlace de administrador o escribe el PIN.</div>`;
+    const P = r.params || {};
+    const NOM = { gt_o15: "Gol temprano · Más de 1,5", gt_o25: "Gol temprano · Más de 2,5",
+      c1t_cero20: "Córners 1T · 0 córners al 20'", c2t_fav77: "Córners 2T · favorito perdiendo al 77'" };
+    const ORDEN = ["gt_o15", "gt_o25", "c1t_cero20", "c2t_fav77"];
+    const RES = { acierto: "✅ Salió", fallo: "❌ No salió", pendiente: "⏳ En juego", anulada: "Anulada" };
+    const c2 = (v) => n(v).replace(".", ",");
+    const pct = (v) => (v == null ? "–" : `${Math.round(Number(v) * 100)}%`);
+    setTimeout(() => {
+      $("#btn-lab")?.addEventListener("click", async () => {
+        const cambios = {};
+        document.querySelectorAll("[data-lab]").forEach((i) => {
+          const v = i.type === "checkbox" ? i.checked : Number(i.value);
+          if (JSON.stringify(v) !== JSON.stringify(P[i.dataset.lab])) cambios[i.dataset.lab] = v;
+        });
+        if (!Object.keys(cambios).length) return toast("No hay cambios");
+        const g = await conPin((pin) => post("/admin/config", { pin, cambios }));
+        if (g) { toast(g.nueva_version ? `Guardado como ${g.nueva_version}` : "Guardado"); navegar(); }
+      });
+    });
+
+    // Umbral de hoy y su historia por estrategia
+    const porEst = {};
+    for (const u of r.umbrales || []) (porEst[u.estrategia] ??= []).push(u);
+    const hoy = (e) => (porEst[e] || []).slice(-1)[0];
+
+    // Gráfica de líneas en SVG (sin librerías). series: [{pts:[{x,y,t}], cls}]
+    const grafica = ({ series, umbral, xEtq, yDec = 2, alto = 120, xMin, xMax, aria }) => {
+      const todos = series.flatMap((s) => s.pts).filter((p) => Number.isFinite(p.y));
+      if (!todos.length) return `<p class="nota">Todavía sin datos para graficar.</p>`;
+      const W = 320, H = alto, PL = 34, PR = 8, PT = 8, PB = 18;
+      const x0 = xMin ?? Math.min(...todos.map((p) => p.x)), x1 = xMax ?? Math.max(...todos.map((p) => p.x));
+      const ys = todos.map((p) => p.y).concat(umbral != null ? [umbral] : []);
+      let y0 = Math.min(...ys), y1 = Math.max(...ys);
+      if (y1 - y0 < 0.1) { y0 -= 0.05; y1 += 0.05; }
+      const pad = (y1 - y0) * 0.08; y0 -= pad; y1 += pad;
+      const X = (x) => PL + (x - x0) / Math.max(x1 - x0, 1e-9) * (W - PL - PR);
+      const Y = (y) => PT + (1 - (y - y0) / (y1 - y0)) * (H - PT - PB);
+      const linea = (s) => s.pts.length > 1 ? `<path class="lab-l ${s.cls}" d="${s.pts.map((p, i) => `${i ? "L" : "M"}${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join(" ")}"/>` : "";
+      const puntos = (s) => s.pts.map((p) => `<circle class="lab-p ${s.cls}" cx="${X(p.x).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="2.6"><title>${esc(p.t || "")}</title></circle>`).join("");
+      const ticks = [y0 + pad, (y0 + y1) / 2, y1 - pad].map((v) => `<text class="lab-t" x="${PL - 4}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end">${n(v, yDec).replace(".", ",")}</text>
+        <line class="lab-g" x1="${PL}" x2="${W - PR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/>`).join("");
+      return `<svg class="lab-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(aria || "")}">
+        ${ticks}
+        ${umbral != null ? `<line class="mini-umbral" x1="${PL}" x2="${W - PR}" y1="${Y(umbral).toFixed(1)}" y2="${Y(umbral).toFixed(1)}"/>` : ""}
+        ${series.map(linea).join("")}${series.map(puntos).join("")}
+        <text class="lab-t" x="${PL}" y="${H - 4}">${esc(xEtq[0])}</text><text class="lab-t" x="${W - PR}" y="${H - 4}" text-anchor="end">${esc(xEtq[1])}</text>
+      </svg>`;
+    };
+    const dia = (f) => new Date(f + "T12:00:00").toLocaleDateString("es-CO", { day: "2-digit", month: "short" });
+
+    const tarjetaEst = (e) => {
+      const u = hoy(e), h = porEst[e] || [];
+      if (!u) return "";
+      const t0 = new Date(h[0].fecha + "T12:00:00").getTime();
+      const xs = (x) => (new Date(x.fecha + "T12:00:00").getTime() - t0) / 864e5;
+      const serieU = { cls: "u", pts: h.filter((x) => x.umbral != null).map((x) => ({ x: xs(x), y: Number(x.umbral), t: `${dia(x.fecha)} · umbral ${c2(x.umbral)} (${x.aciertos}/${x.n})` })) };
+      const serieJ = { cls: "j", pts: h.filter((x) => x.cuota_justa != null).map((x) => ({ x: xs(x), y: Number(x.cuota_justa), t: `${dia(x.fecha)} · cuota justa ${c2(x.cuota_justa)}` })) };
+      const esGol = e.startsWith("gt_");
+      return `<div class="tarjeta">
+        <div class="fila detalle"><span><b>${esc(NOM[e] || e)}</b></span><span class="num">umbral <b>${c2(u.umbral)}</b></span></div>
+        <p class="nota" style="margin-top:4px">Se dio ${u.aciertos} de ${u.n} (${pct(u.p)}). Con ese tamaño de muestra lo prudente es asumir al menos ${pct(u.ic_bajo)},
+          así que solo hay valor si la casa paga <b>${c2(u.umbral)}</b> o más. ${esGol ? "" : "Córners: sin cuota en vivo gratis, sirve de referencia."}
+          ${u.n < Number(P.lab_n_min ?? 30) ? `<br>⚠️ Menos de ${esc(P.lab_n_min ?? 30)} casos: todavía no avisa.` : ""}</p>
+        ${h.length > 1 ? grafica({ series: [serieJ, serieU], xEtq: [dia(h[0].fecha), dia(h[h.length - 1].fecha)], aria: `Umbral de ${NOM[e]} por día` })
+          : `<p class="nota">La gráfica del umbral por día aparece desde mañana (se guarda un punto por día).</p>`}
+        ${h.length > 1 ? `<div class="mini-ley"><span><i class="lu"></i>umbral (prudente)</span><span><i class="lj"></i>cuota justa (tasa real)</span></div>` : ""}
+      </div>`;
+    };
+
+    // Curvas de la mejor cuota después del gol, por oportunidad
+    const curvas = (e) => {
+      const ops = (r.oportunidades || []).filter((o) => o.estrategia === e && (o.serie || []).length);
+      if (!ops.length) return `<div class="tarjeta vacio"><strong>${esc(NOM[e])}: aún sin curvas</strong>Aparecen cuando un partido de liga habilitada marca antes del ${esc(P.lab_gt_minuto ?? 15)}'. Desde ahí se fotografía la cuota cada ${esc(P.lab_intervalo_min ?? 2)} min durante ${esc(P.lab_gt_ventana_min ?? 15)} min.</div>`;
+      const series = ops.map((o) => ({ cls: o.resultado, pts: o.serie.filter((p) => p.m != null).map((p) => ({ x: p.m - o.minuto_gatillo, y: Number(p.c), t: `${o.local}–${o.visitante} · +${p.m - o.minuto_gatillo}' · ${p.casa} ${c2(p.c)}` })) }));
+      const u = hoy(e);
+      return `<div class="tarjeta">
+        <div class="fila detalle"><span><b>${esc(NOM[e])}</b></span><span class="tenue">${ops.length} partido${ops.length === 1 ? "" : "s"}</span></div>
+        ${grafica({ series, umbral: u ? Number(u.umbral) : null, xEtq: ["gol", `+${P.lab_gt_ventana_min ?? 15} min`], xMin: 0, xMax: Number(P.lab_gt_ventana_min ?? 15), alto: 150, aria: `Mejor cuota después del gol, ${NOM[e]}` })}
+        <div class="mini-ley"><span><i class="la"></i>salió</span><span><i class="lf"></i>no salió</span><span><i class="lp"></i>en juego</span><span><i class="lu"></i>umbral de hoy</span></div>
+        <p class="nota">Cada línea es un partido: la mejor cuota entre las casas, minuto a minuto desde el gol. Responde tu pregunta de cuánto tarda en subir la cuota.</p>
+      </div>`;
+    };
+
+    const resumen = (r.resumen || []).map((x) => `<tr><td>${esc(NOM[x.estrategia] || x.estrategia)}</td>
+        <td>${x.casos}<small class="sub">${x.aciertos}✅ ${x.fallos}❌</small></td>
+        <td>${x.cuota_media ? c2(x.cuota_media) : "–"}<small class="sub">mejor cuota media</small></td>
+        <td>${x.alertadas}<small class="sub">${x.alertadas_acierto}✅ ${x.alertadas_fallo}❌</small></td>
+        <td class="${Number(x.ganancia_u) > 0 ? "pos" : Number(x.ganancia_u) < 0 ? "neg" : ""}">${x.ganancia_u == null ? "–" : `${n(x.ganancia_u)} u`}</td></tr>`).join("");
+
+    const fila = (o) => `<div class="tarjeta ${o.resultado === "acierto" ? "acierto" : o.resultado === "fallo" ? "fallo" : ""}">
+        <div class="liga-top">${esc(o.liga || "")}</div>
+        <div class="fila detalle"><span><b>${esc(NOM[o.estrategia] || o.estrategia)}</b></span><span>${esc(RES[o.resultado] || o.resultado)}</span></div>
+        <p style="margin:6px 0 2px">${esc(o.local)} – ${esc(o.visitante)} · gol al ${o.minuto_gatillo}'${o.goles_final != null ? ` · final ${o.goles_final} goles` : ""}</p>
+        <small class="sub">${hora(o.ts_inicio)}${o.vigilando ? " · vigilando la cuota" : ""}</small>
+        <p class="nota">${o.mejor_cuota ? `Mejor cuota ${c2(o.mejor_cuota)} (${esc(o.mejor_casa)}, min ${o.minuto_mejor})` : "Ninguna casa ofreció esa línea"}
+          · umbral ${c2(o.umbral)}${o.alertada ? ` · <b>superó el umbral</b> al ${o.minuto_alerta}' con ${esc(o.casa_alerta)} ${c2(o.cuota_alerta)}` : ""}</p>
+      </div>`;
+
+    const salud = (k, t) => { const s = P[k]; const mal = s && s.fallos > 0;
+      return `<span><span class="punto ${!s ? "" : mal ? "mal" : "ok"}" style="display:inline-block"></span> ${t}${mal ? ` · ${s.fallos} fallo${s.fallos === 1 ? "" : "s"} seguido${s.fallos === 1 ? "" : "s"}` : ""}</span>`; };
+    const sw = (k, t, d) => `<div class="campo"><label for="lb-${k}">${t}<small>${d}</small></label>
+          <label class="sw"><input id="lb-${k}" type="checkbox" data-lab="${k}" ${P[k] !== false ? "checked" : ""}><span></span></label></div>`;
+    const campo = (k, t, d) => `<div class="campo"><label for="lb-${k}">${t}<small>${d}</small></label>
+      <input id="lb-${k}" type="number" step="1" inputmode="numeric" data-lab="${k}" value="${esc(P[k])}" style="max-width:80px"></div>`;
+    const u24 = r.ultimas_24h || {};
+
+    return `<div class="tarjeta">
+        <div class="fila detalle"><span><b>Flashscore</b></span><span class="tenue">últimas 24 h: ${u24.fotos ?? 0} fotos de ${u24.partidos ?? 0} partidos</span></div>
+        <div class="mini-ley" style="margin-top:6px">${salud("fs_salud_lista", "lista en vivo")}${salud("fs_salud_vivo", "cuotas en vivo")}</div>
+        <p class="nota">Si falla ${esc(P.fs_fallos_aviso ?? 3)} ciclos seguidos te llega "⚠️ Flashscore no responde" al celular.</p>
+      </div>
+      <div class="titulo-seccion"><h2>Umbral de entrada</h2></div>
+      <p class="nota">Lo calcula la base con las ligas habilitadas y se recalcula cada hora; queda un punto por día para ver cómo se mueve con los meses.</p>
+      ${ORDEN.map(tarjetaEst).join("")}
+      <div class="titulo-seccion"><h2>La cuota después del gol</h2></div>
+      ${curvas("gt_o15")}${curvas("gt_o25")}
+      <div class="titulo-seccion"><h2>¿Está funcionando?</h2></div>
+      ${resumen ? `<div class="tarjeta tabla-wrap"><table><thead><tr><th>Estrategia</th><th>Casos</th><th>Cuota</th><th title="Las que superaron el umbral">Avisos</th><th>Ganancia</th></tr></thead><tbody>${resumen}</tbody></table></div>
+        <p class="nota">La ganancia es por unidad, solo de las que superaron el umbral, con la cuota a la que lo superaron. Con menos de 30 avisos resueltos todavía no se puede concluir nada.</p>`
+        : `<p class="nota">Sin casos todavía.</p>`}
+      <p class="nota"><a href="#corners">Ver el detalle de córners ›</a></p>
+      <div class="titulo-seccion"><h2>Últimos casos</h2></div>
+      ${(r.oportunidades || []).slice(0, 30).map(fila).join("") || `<p class="nota">Sin casos todavía.</p>`}
+      <div class="titulo-seccion"><h2>Parámetros</h2></div>
+      <div class="tarjeta">
+        ${sw("lab_activo", "<b>Laboratorio de goles</b>", "Detecta, vigila la cuota y resuelve (gratis, con Flashscore)")}
+        ${sw("lab_push", "Avisos al celular", "Cuando una casa paga el umbral o más (por ahora: gol temprano, Más de 1,5)")}
+        ${sw("fs_vivo_activo", "Cuotas en vivo", "Apagado: no se fotografía ninguna cuota (la alerta usa API-Football)")}
+        ${campo("lab_gt_minuto", "Gol temprano hasta el minuto", "El primer gol debe caer hasta aquí")}
+        ${campo("lab_gt_ventana_min", "Vigilar la cuota (min)", "Minutos después del gol durante los que se mira la cuota")}
+        ${campo("lab_intervalo_min", "Foto cada (min)", "En los partidos vigilados")}
+        ${campo("lab_n_min", "Casos mínimos para avisar", "Con menos, solo registra")}
+        ${campo("fs_vivo_intervalo_min", "Foto del resto cada (min)", "Partidos sin nada especial")}
+        ${campo("fs_vivo_max_consultas", "Tope de consultas por ciclo", "Poka-yoke contra bloqueos (3 por partido)")}
+        <div class="botones"><button class="btn" id="btn-lab">Guardar</button></div>
+      </div>`;
   },
 
   // ---------- Córners (lab, DECISIONES 37): solo administrador ----------
