@@ -524,3 +524,8 @@ button.vfila:disabled .vflecha { visibility: hidden; }
 .fila-agenda { display: grid; grid-template-columns: 3.6em 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--linea); }
 .fila-agenda:last-child { border-bottom: 0; }
 .fila-agenda small { display: block; opacity: .7; overflow-wrap: anywhere; }
+
+/* Pestañas Goles / Córners dentro de Ajustes (18 nov) */
+.ajustes-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: var(--panel); border: 1px solid var(--linea); border-radius: 12px; padding: 4px; margin: 18px 0 4px; }
+.ajustes-tab { min-height: 44px; border: 0; border-radius: 9px; background: transparent; color: var(--tenue); font: inherit; font-weight: 700; cursor: pointer; }
+.ajustes-tab[aria-selected="true"] { background: var(--panel-2); color: var(--cesped); }

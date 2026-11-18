@@ -603,6 +603,14 @@ const pantallas = {
     const usadas = c.presupuesto.usadas_hoy, tope = Number(P.presupuesto_diario?.valor ?? 100);
     const hoy = new Date().toISOString().slice(0, 10);
     const push = await estadoPush();
+    // Pestañas Goles / Córners dentro de Ajustes (Fredy, 18 nov): cada mercado con sus parámetros
+    let panel = "goles";
+    try { panel = localStorage.getItem("ajustes_panel") === "corners" ? "corners" : "goles"; } catch (_) {}
+    const valC = (k) => P[k]?.valor;
+    const swC = (k, t, d) => `<div class="campo"><label for="c-${k}">${t}<small>${d}</small></label>
+          <label class="sw"><input id="c-${k}" type="checkbox" data-ck="${k}" ${valC(k) !== false ? "checked" : ""}><span></span></label></div>`;
+    const numC = (k, t, d) => valC(k) === undefined ? "" : `<div class="campo"><label for="c-${k}">${t}<small>${d}</small></label>
+          <input id="c-${k}" type="number" step="1" inputmode="numeric" data-ck="${k}" value="${esc(valC(k))}" style="max-width:80px"></div>`;
 
     setTimeout(() => {
       $("#btn-push")?.addEventListener("click", activarPush);
@@ -612,6 +620,22 @@ const pantallas = {
         if (r) toast(r.enviados ? `Enviada a ${r.enviados} dispositivo(s)` : "No hay dispositivos suscritos");
       });
       $("#btn-guardar")?.addEventListener("click", () => guardar(P));
+      document.querySelectorAll(".ajustes-tab").forEach((t) => t.addEventListener("click", () => {
+        const elegido = t.dataset.panel;
+        try { localStorage.setItem("ajustes_panel", elegido); } catch (_) {}
+        document.querySelectorAll(".ajustes-tab").forEach((x) => x.setAttribute("aria-selected", x === t));
+        document.querySelectorAll("[data-panel-de]").forEach((sec) => { sec.hidden = sec.dataset.panelDe !== elegido; });
+      }));
+      $("#btn-guardar-corners")?.addEventListener("click", async () => {
+        const cambios = {};
+        document.querySelectorAll("[data-ck]").forEach((i) => {
+          const v = i.type === "checkbox" ? i.checked : Number(i.value);
+          if (JSON.stringify(v) !== JSON.stringify(P[i.dataset.ck]?.valor)) cambios[i.dataset.ck] = v;
+        });
+        if (!Object.keys(cambios).length) return toast("No hay cambios");
+        const g = await conPin((pin) => post("/admin/config", { pin, cambios }));
+        if (g) { toast(g.version_corners ? `Guardado: ahora es la versión ${g.version_corners}` : "Guardado"); navegar(); }
+      });
       document.querySelectorAll(".hora").forEach((b) => b.addEventListener("click", () => {
         const on = !b.classList.contains("on");
         b.classList.toggle("on", on); b.setAttribute("aria-pressed", on);
@@ -645,6 +669,12 @@ const pantallas = {
         ${c.uso.filter((u) => u.fecha.slice(0, 10) === hoy).map((u) => `<div class="fila detalle"><span>${esc(u.endpoint)}</span><b>${u.llamadas}</b></div>`).join("") || `<p class="nota">Sin consultas hoy.</p>`}
       </div>
 
+
+      <div class="ajustes-tabs" role="tablist" aria-label="Parámetros">
+        <button type="button" role="tab" class="ajustes-tab" data-panel="goles" aria-selected="${panel === "goles"}">Goles</button>
+        <button type="button" role="tab" class="ajustes-tab" data-panel="corners" aria-selected="${panel === "corners"}">Córners</button>
+      </div>
+      <section data-panel-de="goles" ${panel === "goles" ? "" : "hidden"}>
       <div class="titulo-seccion"><h2>Regla ${esc(P.regla_version?.valor)}</h2><small>cambiar algo crea una versión nueva</small></div>
       <div class="tarjeta">
         ${["minuto_min", "minuto_max", "cuota_fav_max", "diferencia_min", "dominancia_min", "cuota_objetivo", "momentum_ventana_min", "momentum_gap_min", ...(P.goles_fav_max ? ["goles_fav_max"] : [])].map((k) => campoNum(k)).join("")}
@@ -677,6 +707,25 @@ const pantallas = {
         ${["presupuesto_diario", "reserva_api", "intervalo_radar_min", "intervalo_seguimiento_min", "fraccion_radar", "max_detalle_escaneo", "stake"].map((k) => campoNum(k)).join("")}
         <div class="botones"><button class="btn" id="btn-guardar">Guardar cambios</button></div>
       </div>
+
+      </section>
+
+      <section data-panel-de="corners" ${panel === "corners" ? "" : "hidden"}>
+      <div class="titulo-seccion"><h2>Córners ${esc(P.corners_version?.valor ?? "c1")}</h2><small>cambiar minutos u objetivo crea una versión nueva</small></div>
+      <div class="tarjeta">
+        ${swC("corners_activo", "Laboratorio activo", "Detecta, guarda y resuelve el acierto con Flashscore (gratis)")}
+        ${swC("corners_push", "Avisos al celular", "Apagado: sigue juntando datos en silencio")}
+        ${swC("corners_cuota", "Leer la cuota", "1 consulta de API por aviso. Apagado: 0 consultas")}
+        ${numC("corners_1t_min_desde", "1T: minuto en que se revisa", "Si en ese minuto el partido va 0 córners, te avisa (cada partido se revisa una sola vez)")}
+        ${numC("corners_1t_min_hasta", "1T: hasta el minuto", "Margen por si un ciclo se retrasa")}
+        ${numC("corners_2t_min_desde", "2T: desde el minuto", "Desde cuándo se revisa si el favorito va perdiendo")}
+        ${numC("corners_2t_min_hasta", "2T: hasta el minuto", "")}
+        ${numC("corners_objetivo", "Córners más que se buscan", "La línea es córners actuales + este número − 0,5")}
+        ${numC("corners_api_max_dia", "Consultas de API por día", "Solo cuenta si \"Leer la cuota\" está encendido")}
+        <div class="botones"><button class="btn" id="btn-guardar-corners">Guardar córners</button></div>
+        <p class="nota">Los interruptores y el tope de consultas no cambian la versión. <a href="#corners">Ver avisos y acierto de córners ›</a></p>
+      </div>
+      </section>
 
       <div class="titulo-seccion"><h2>Últimos escaneos</h2></div>
       <div class="tarjeta tabla-wrap"><table><thead><tr><th>Hora</th><th>Estado</th><th>Vivos</th><th>Cand.</th><th>API</th><th>Alertas</th></tr></thead><tbody>
