@@ -48,11 +48,35 @@ export async function fotografiar(f: any, motivo: string, casas: number[], log: 
     }
   }
   const gl = f.goals.home ?? 0, gv = f.goals.away ?? 0;
+  // Poka-yoke de cuota congelada (Atenas 1-0 Fenix, 18 nov): justo después de un gol el feed sigue unos
+  // minutos con el tablero de ANTES del gol (Más de 1,5 a 1,53 cuando ya pagaba 1,09; en la app sale tachado).
+  // Una casa está congelada si (a) todavía ofrece una línea que el marcador ya superó (Más de 0,5 con 1-0), o
+  // (b) un Más de L vale lo mismo o más que antes del gol en cualquier casa (con un gol más, el Más de L
+  // necesariamente baja: Betano 1,53 tras el 1-0 cuando Stake pagaba 1,50 con 0-0). Sus filas quedan
+  // activa = false y congelada = true: se guardan para estudiar, pero no cuentan para alertas ni promedios.
+  const total = gl + gv;
+  const minAntes = new Map<number, number>();   // línea → menor cuota Over antes del último gol, entre casas
+  if (total > 0) {
+    for (const r of await sql`select distinct on (casa_id, linea) casa_id, linea, cuota_over from futbol.cuotas_vivo
+                              where fixture_id = ${id} and goles_local + goles_visitante < ${total} and linea is not null
+                                and cuota_over is not null and not congelada order by casa_id, linea, ts desc`) {
+      const l = Number(r.linea), c = Number(r.cuota_over);
+      if (!minAntes.has(l) || c < minAntes.get(l)!) minAntes.set(l, c);
+    }
+  }
+  const congeladas = new Set<number>();
   for (const r of filas) {
+    if (r.linea == null || r.over == null || !r.activa) continue;
+    const antes = minAntes.get(Number(r.linea));
+    if (Number(r.linea) < total || (antes != null && r.over >= antes * 0.97)) congeladas.add(r.casa);
+  }
+  if (congeladas.size) log(`fs vivo ${fsId}: tablero congelado tras el gol en ${[...congeladas].map((c) => FS.CASAS_CO[c] ?? c).join(", ")}`);
+  for (const r of filas) {
+    const cong = congeladas.has(r.casa) && r.linea != null;
     await sql`insert into futbol.cuotas_vivo (fixture_id, fs_id, minuto, estado, goles_local, goles_visitante, motivo,
-                casa_id, casa, linea, cuota_over, cuota_under, activa)
+                casa_id, casa, linea, cuota_over, cuota_under, activa, congelada)
               values (${id}, ${fsId}, ${f.fixture.status.elapsed ?? null}, ${f.fixture.status.short}, ${gl}, ${gv}, ${motivo},
-                ${r.casa}, ${FS.CASAS_CO[r.casa] ?? String(r.casa)}, ${r.linea}, ${r.over}, ${r.under}, ${r.activa})`;
+                ${r.casa}, ${FS.CASAS_CO[r.casa] ?? String(r.casa)}, ${r.linea}, ${r.over}, ${r.under}, ${cong ? false : r.activa}, ${cong})`;
   }
   return { consultas, errores, conOferta };
 }
