@@ -71,7 +71,9 @@ export async function ligaDe(ligaFS: string, crear: boolean): Promise<number | n
   if (!crear) return null;
   // Liga nueva, solo de Flashscore: id negativo. Apagada solo si la política de ligas ya la excluye.
   const [patron] = await sql`select motivo from futbol.liga_patrones_excluir
-                             where ${liga} ~* regex and (pais is null or pais = ${pais}) order by id limit 1`;
+                             where ${liga} ~* regex and (pais is null or pais = ${pais})
+                               and motivo <> 'femenil'   -- Fredy, 18 nov: las femeninas de liga vuelven a entrar
+                             order by id limit 1`;
   const [nueva] = await sql`
     insert into futbol.ligas (id, nombre, pais, habilitada, notas)
     values (nextval('futbol.fs_liga_seq'), ${liga}, ${pais}, ${!patron},
