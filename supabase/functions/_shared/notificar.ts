@@ -20,6 +20,7 @@ export function vapid(): Vapid | null {
 export type Destinatario = {
   usuario_id: number | null; rol: string | null; nombre: string | null;
   decision: "entre" | "no_entro" | null; monto: number | null; cuota: number | null;
+  banca: number | null; ganancia_pct: number | null;   // monto sugerido (DECISIONES 41)
 };
 type Mensaje = Record<string, unknown>;
 export type Opciones = { alertaId?: number; soloAdmin?: boolean; omitirMarcados?: boolean; soloUsuario?: number };
@@ -31,7 +32,8 @@ export async function notificar(mensaje: Mensaje | ((d: Destinatario) => Mensaje
   const abierto = m?.v !== "cerrado";
   const alerta = opc.alertaId ?? -1;
   const subs = await sql`
-    select s.id, s.endpoint, s.p256dh, s.auth, s.usuario_id, u.rol, u.nombre, e.decision, e.monto, e.cuota
+    select s.id, s.endpoint, s.p256dh, s.auth, s.usuario_id, u.rol, u.nombre, e.decision, e.monto, e.cuota,
+           u.ganancia_pct, case when u.id is not null and u.ganancia_pct is not null then futbol.banca_actual(u.id::int) end as banca
     from futbol.push_suscripciones s
     left join futbol.usuarios u on u.id = s.usuario_id
     left join futbol.entradas e on e.usuario_id = s.usuario_id and e.alerta_id = ${alerta}
@@ -45,6 +47,7 @@ export async function notificar(mensaje: Mensaje | ((d: Destinatario) => Mensaje
     const d: Destinatario = {
       usuario_id: s.usuario_id == null ? null : Number(s.usuario_id), rol: s.rol, nombre: s.nombre, decision: s.decision,
       monto: s.monto == null ? null : Number(s.monto), cuota: s.cuota == null ? null : Number(s.cuota),
+      banca: s.banca == null ? null : Number(s.banca), ganancia_pct: s.ganancia_pct == null ? null : Number(s.ganancia_pct),
     };
     const msg = typeof mensaje === "function" ? mensaje(d) : mensaje;
     if (!msg) continue;
@@ -66,6 +69,23 @@ export const notificarTodos = (mensaje: Mensaje) => notificar(mensaje);
 // ---------- Textos (formato colombiano) ----------
 export const pesos = (v: number) => `$${Math.round(Math.abs(v)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".")}`;
 export const cuotaTxt = (c: unknown) => Number(c).toFixed(2).replace(".", ",");
+
+// ---------- Monto sugerido (DECISIONES 41) ----------
+// Para ganar ganancia_pct % de la banca: monto = banca × pct / (cuota − 1). Cuota 1,50 y 1 % → 2 % de la banca;
+// cuota 2,00 → 1 %. Tope maxPct % de la banca (con cuotas muy bajas el monto se dispara). Redondeo a $100.
+export function montoSugerido(d: Destinatario, cuota: number | null, maxPct = 10): { monto: number; gana: number; tope: boolean } | null {
+  if (!d.banca || d.banca <= 0 || !d.ganancia_pct || !cuota || cuota <= 1) return null;
+  const ideal = d.banca * d.ganancia_pct / 100 / (cuota - 1);
+  const techo = d.banca * maxPct / 100;
+  const monto = Math.max(Math.round(Math.min(ideal, techo) / 100) * 100, 100);
+  return { monto, gana: monto * (cuota - 1), tope: ideal > techo };
+}
+export function textoMonto(d: Destinatario, cuota: number | null, casa: string | null, maxPct = 10): string {
+  const m = montoSugerido(d, cuota, maxPct);
+  if (!m) return "";
+  return `\nSugerido: ${pesos(m.monto)}${casa ? ` en ${casa}` : ""} a ${cuotaTxt(cuota)} → ganas ${pesos(m.gana)}` +
+    (m.tope ? ` (tope ${maxPct} % de tu banca)` : ` (${String(d.ganancia_pct).replace(".", ",")} % de tu banca)`);
+}
 
 // ---------- País y liga en cada aviso (Fredy, 15 nov: sin la liga el partido queda "perdido") ----------
 // API-Football escribe el país con guiones ("Costa-Rica"); Flashscore en mayúsculas y con la fase pegada

@@ -34,7 +34,7 @@
 // solo para administradores. Lo de administrador acepta la sesión admin o el PIN (respaldo).
 //   GET  /yo                  quién soy (o usuario null) y el modo de acceso
 //   GET  /mi-banca            mi yield, el del radar en el mismo periodo, mis movimientos
-//   POST /mi-banca            { banca_inicial }
+//   POST /mi-banca            { banca_inicial } y/o { ganancia_pct } (monto sugerido, DECISIONES 41)
 //   POST /entradas            { alerta_id, decision: entre|no_entro|borrar, monto?, cuota?, origen? }
 //   POST /acceso/canjear      { token } → { sesion, usuario }   (público: el enlace de WhatsApp)
 //   POST /admin/usuarios      { accion: listar|crear|enlace|activo|editar, ... }
@@ -64,6 +64,9 @@ const EDITABLES = new Set([
   "horas_activas_utc", "fraccion_radar", "max_detalle_escaneo", "stake", "cuotas_siempre", "excluir_reempate", "excluir_roja_fav", "goles_fav_max",
   // Córners (lab, DECISIONES 37)
   "corners_activo", "corners_push", "corners_cuota", "corners_api_max_dia", ...CORNERS_REGLA,
+  // Cuotas en vivo de Flashscore y laboratorio de goles (DECISIONES 40)
+  "fs_vivo_activo", "fs_vivo_max_consultas", "fs_vivo_intervalo_min", "fs_vivo_intervalo_cand_min", "fs_fallos_aviso",
+  "lab_activo", "lab_push", "lab_gt_minuto", "lab_gt_ventana_min", "lab_intervalo_min", "lab_n_min",
 ]);
 // Claves que nunca salen por la API pública
 const OCULTAS = new Set(["token_forzar"]);
@@ -94,6 +97,8 @@ function validarValor(clave: string, v: unknown): boolean {
   }
   if (clave === "horas_activas_utc") return Array.isArray(v) && v.every((h) => Number.isInteger(h) && h >= 0 && h <= 23);
   if (clave === "corners_activo" || clave === "corners_push" || clave === "corners_cuota") return typeof v === "boolean";
+  if (clave === "fs_vivo_activo" || clave === "lab_activo" || clave === "lab_push") return typeof v === "boolean";
+  if (clave === "fs_vivo_max_consultas") return typeof v === "number" && Number.isInteger(v) && v >= 3 && v <= 60;
   if (clave === "escaneo_activo" || clave === "cuotas_siempre" || clave === "excluir_reempate" || clave === "excluir_roja_fav") return typeof v === "boolean";
   return typeof v === "number" && Number.isFinite(v) && v >= 0;
 }
@@ -274,8 +279,14 @@ async function miBanca(yo: Sesion) {
   // Plata real: solo las entradas con monto (sin monto cuentan para el yield, no para la banca)
   const conMonto = cerr.filter((m: any) => m.monto != null);
   const montos = entre.filter((m: any) => m.monto != null).map((m: any) => Number(m.monto));
+  const [ex] = await sql`select ganancia_pct, futbol.banca_actual(${yo.usuario_id}::int) as banca_actual,
+                                (select (valor #>> '{}')::numeric from futbol.config where clave = 'monto_max_pct') as monto_max_pct
+                         from futbol.usuarios where id = ${yo.usuario_id}`;
   return {
     banca_inicial: yo.banca_inicial,
+    ganancia_pct: ex?.ganancia_pct == null ? null : Number(ex.ganancia_pct),
+    banca_actual: ex?.banca_actual == null ? null : Number(ex.banca_actual),
+    monto_max_pct: Number(ex?.monto_max_pct ?? 10),
     yo: {
       entradas: entre.length, cerradas: cerr.length, aciertos: cerr.filter((m: any) => m.resultado === "acierto").length,
       invertido, ganancia, yield_pct: invertido ? Math.round(1000 * ganancia / invertido) / 10 : null,
@@ -500,6 +511,38 @@ async function cornersLab() {
   return { params, alertas, resumen, base, consultas_hoy: hoy.consultas_hoy };
 }
 
+// ---------- Laboratorio de goles y córners (DECISIONES 40): solo administradores ----------
+// Umbral de entrada calculado desde la base (lab_umbrales, uno por día), oportunidades con la serie de la
+// mejor cuota tras el gol, resumen de acierto y ganancia de las que superaron el umbral, y salud de Flashscore.
+async function laboratorio() {
+  const params = Object.fromEntries((await sql`select clave, valor from futbol.config
+    where clave like 'lab\_%' or clave like 'fs\_vivo%' or clave like 'fs\_salud%' or clave = 'fs_fallos_aviso'`)
+    .map((r: any) => [r.clave, r.valor]));
+  const umbrales = await sql`select fecha, estrategia, n, aciertos, p, ic_bajo, cuota_justa, umbral, actualizado
+                             from futbol.lab_umbrales where fecha > now() - interval '400 days' order by fecha, estrategia`;
+  const oportunidades = await sql`
+    select id, estrategia, fixture_id, liga, local, visitante, ts_inicio, minuto_gatillo, linea, vence_minuto, vigilando,
+           n_hist, p_hist, umbral, mejor_cuota, mejor_casa, minuto_mejor, serie, alertada, ts_alerta, minuto_alerta,
+           cuota_alerta, casa_alerta, resultado, goles_final
+    from futbol.lab_oportunidades order by ts_inicio desc limit 150`;
+  const resumen = await sql`
+    select estrategia, count(*)::int as casos,
+           count(*) filter (where resultado = 'acierto')::int as aciertos,
+           count(*) filter (where resultado = 'fallo')::int as fallos,
+           count(*) filter (where mejor_cuota is not null)::int as con_cuota,
+           round(avg(mejor_cuota), 3) as cuota_media,
+           count(*) filter (where alertada)::int as alertadas,
+           count(*) filter (where alertada and resultado = 'acierto')::int as alertadas_acierto,
+           count(*) filter (where alertada and resultado = 'fallo')::int as alertadas_fallo,
+           round(sum(case when resultado = 'acierto' then cuota_alerta - 1 when resultado = 'fallo' then -1 end)
+                 filter (where alertada), 2) as ganancia_u
+    from futbol.lab_oportunidades group by 1 order by 1`;
+  const [hoy] = await sql`select count(*)::int as filas, count(distinct (fixture_id, date_trunc('minute', ts)))::int as fotos,
+                                 count(distinct fixture_id)::int as partidos
+                          from futbol.cuotas_vivo where ts >= now() - interval '24 hours'`;
+  return { params, umbrales, oportunidades, resumen, ultimas_24h: hoy };
+}
+
 async function config() {
   const params = (await sql`select clave, valor, descripcion, es_regla, actualizado from futbol.config order by es_regla desc, clave`)
     .filter((p: any) => !OCULTAS.has(p.clave));
@@ -714,6 +757,14 @@ Deno.serve(async (req) => {
     }
     if (ruta === "/mi-banca") {
       if (!yo) return sinSesion();
+      // Monto sugerido (DECISIONES 41): % de la banca que quiere ganar por entrada (vacío = sin sugerencia)
+      if (body && "ganancia_pct" in body) {
+        const g = body.ganancia_pct;
+        const pct = g == null || g === "" ? null : Math.round(Number(String(g).replace(",", ".")) * 100) / 100;
+        if (pct !== null && !(pct > 0 && pct <= 20)) return json({ error: "El % debe estar entre 0,1 y 20" }, 400);
+        await sql`update futbol.usuarios set ganancia_pct = ${pct} where id = ${yo.usuario_id}`;
+        if (!("banca_inicial" in body)) return json({ ok: true });
+      }
       const v = body?.banca_inicial;
       const banca = v == null || v === "" ? null : Math.round(Number(v));
       if (banca !== null && !(banca >= 0 && banca < 1e12)) return json({ error: "valor inválido" }, 400);
@@ -769,6 +820,7 @@ Deno.serve(async (req) => {
         return json({ ok: true });
       }
       if (ruta === "/admin/corners") return json(await cornersLab());
+      if (ruta === "/admin/laboratorio") return json(await laboratorio());
       if (ruta === "/admin/push-prueba") {
         const n = await notificar({ titulo: "🔔 Prueba de ADN Soccer", cuerpo: "Si ves esto, las notificaciones funcionan.", url: "./#ajustes", tag: "prueba" },
                                   { soloAdmin: true });
