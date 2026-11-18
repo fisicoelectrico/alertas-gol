@@ -784,12 +784,6 @@ Object.assign(pantallas, {
         ${sw("corners_cuota", "Leer la cuota", `1 consulta de API por aviso · hoy ${r.consultas_hoy}/${esc(P.corners_api_max_dia)}. Apagado: 0 consultas`)}
         <div class="botones"><button class="btn sec" id="btn-corners-sw">Guardar interruptores</button></div>
       </div>
-      <div class="titulo-seccion"><h2>¿Está funcionando?</h2></div>
-      ${resumen ? `<div class="tarjeta tabla-wrap"><table><thead><tr><th>Mercado</th><th>Avisos</th><th>Acierto</th><th title="Solo las que tuvieron cuota">Con cuota</th><th>Ganancia</th></tr></thead><tbody>${resumen}</tbody></table></div>
-        <p class="nota">La que manda es "Con cuota": acierto de las alertas que sí tenían cuota, contra la probabilidad implícita de esas cuotas (verde si la supera). Con menos de 30 resueltas todavía no se puede concluir nada.</p>`
-        : `<div class="tarjeta vacio"><strong>Aún no hay avisos de córners</strong>Llegan cuando un partido va 0 córners entre el ${esc(P.corners_1t_min_desde)}' y el ${esc(P.corners_1t_min_hasta)}', o cuando el favorito va perdiendo entre el ${esc(P.corners_2t_min_desde)}' y el ${esc(P.corners_2t_min_hasta)}'.</div>`}
-      <div class="titulo-seccion"><h2>Últimos avisos</h2></div>
-      ${(r.alertas || []).slice(0, 40).map(fila).join("") || `<p class="nota">Sin avisos todavía.</p>`}
       <div class="titulo-seccion"><h2>Parámetros</h2></div>
       <div class="tarjeta">
         ${campo("corners_1t_min_desde", "1T desde el minuto", "Desde cuándo se revisa si va 0 córners")}
@@ -800,7 +794,16 @@ Object.assign(pantallas, {
         ${campo("corners_api_max_dia", "Consultas de API por día", "Una por aviso, para leer la cuota")}
         <p class="nota">Cambiar minutos u objetivo abre una versión nueva (c1 → c2) para no mezclar resultados. El tope de consultas y los interruptores no cambian la versión.</p>
         <div class="botones"><button class="btn" id="btn-corners">Guardar</button></div>
-      </div>`;
+      </div>
+      <div class="titulo-seccion"><h2>¿Está funcionando?</h2></div>
+      ${resumen ? `<div class="tarjeta tabla-wrap"><table><thead><tr><th>Mercado</th><th>Avisos</th><th>Acierto</th><th title="Solo las que tuvieron cuota">Con cuota</th><th>Ganancia</th></tr></thead><tbody>${resumen}</tbody></table></div>
+        <p class="nota">La que manda es "Con cuota": acierto de las alertas que sí tenían cuota, contra la probabilidad implícita de esas cuotas (verde si la supera). Con menos de 30 resueltas todavía no se puede concluir nada.</p>`
+        : `<div class="tarjeta vacio"><strong>Aún no hay avisos de córners</strong>Llegan cuando un partido va 0 córners entre el ${esc(P.corners_1t_min_desde)}' y el ${esc(P.corners_1t_min_hasta)}', o cuando el favorito va perdiendo entre el ${esc(P.corners_2t_min_desde)}' y el ${esc(P.corners_2t_min_hasta)}'.</div>`}
+      <details class="desplegable">
+        <summary>Últimos avisos <span class="tenue">(${(r.alertas || []).length})</span></summary>
+        ${(r.alertas || []).slice(0, 40).map(fila).join("") || `<p class="nota">Sin avisos todavía.</p>`}
+        ${(r.alertas || []).length > 40 ? `<p class="nota">Se muestran los 40 más recientes.</p>` : ""}
+      </details>`;
   },
 
   async amigos() {
