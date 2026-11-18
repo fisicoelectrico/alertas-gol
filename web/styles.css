@@ -529,3 +529,12 @@ button.vfila:disabled .vflecha { visibility: hidden; }
 .ajustes-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: var(--panel); border: 1px solid var(--linea); border-radius: 12px; padding: 4px; margin: 18px 0 4px; }
 .ajustes-tab { min-height: 44px; border: 0; border-radius: 9px; background: transparent; color: var(--tenue); font: inherit; font-weight: 700; cursor: pointer; }
 .ajustes-tab[aria-selected="true"] { background: var(--panel-2); color: var(--cesped); }
+
+/* Desplegable (córners: últimos avisos cerrados por defecto, 18 nov) */
+.desplegable { margin-top: 18px; }
+.desplegable > summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; min-height: 44px; padding: 0 14px; background: var(--panel); border: 1px solid var(--linea); border-radius: var(--radio); font-weight: 700; }
+.desplegable > summary::-webkit-details-marker { display: none; }
+.desplegable > summary::after { content: "▾"; color: var(--tenue); }
+.desplegable[open] > summary { margin-bottom: 10px; }
+.desplegable[open] > summary::after { content: "▴"; }
+.tenue { color: var(--tenue); font-weight: 400; }

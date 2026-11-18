@@ -8,7 +8,7 @@
 // Botones Entré / No entro (spec 1.6): el service worker marca la entrada sin abrir la app.
 // Lee la URL de la API de config.js y el token de sesión de IndexedDB (localStorage no existe aquí).
 importScripts("config.js");
-const VERSION = "v25";
+const VERSION = "v26";
 const CACHE = `alertas-gol-${VERSION}`;
 const CASCARON = ["./", "index.html", "styles.css", "marca.js", "app.js", "acceso.js", "config.js", "manifest.webmanifest", "icons/icon-192.png"];
 
