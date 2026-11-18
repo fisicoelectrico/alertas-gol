@@ -158,6 +158,11 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
               resultado = case when p.goles_local + p.goles_visitante > o.linea then 'acierto' else 'fallo' end
             from futbol.partidos p
             where p.fixture_id = o.fixture_id and o.resultado = 'pendiente' and p.estado in ('FT', 'AET', 'PEN')`;
+  // Los aciertos se cierran apenas cae el gol que pasa la línea; al terminar se anota el total final real
+  await sql`update futbol.lab_oportunidades o set goles_final = p.goles_local + p.goles_visitante
+            from futbol.partidos p
+            where p.fixture_id = o.fixture_id and o.resultado = 'acierto' and p.estado in ('FT', 'AET', 'PEN')
+              and o.goles_final is distinct from p.goles_local + p.goles_visitante and o.ts_inicio > now() - interval '1 day'`;
 }
 
 function ligaDe(f: any) {
