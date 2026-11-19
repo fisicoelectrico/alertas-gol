@@ -17,9 +17,10 @@ create table if not exists futbol.corners_cuotas_manual (
 create index if not exists corners_cuotas_manual_alerta on futbol.corners_cuotas_manual (alerta_id, minuto);
 alter table futbol.corners_cuotas_manual enable row level security;
 
--- Las 3 cuotas de Corinthians–Botafogo que Fredy mandó por el chat (aviso 79): 25' 1,30 · 29' 1,66 · 32' 1,89
+-- Cuotas de Corinthians–Botafogo que Fredy mandó por el chat (aviso 79), todas con 0 córners en el 1T:
+-- más de 1,5: 25' 1,30 · 29' 1,66 · 32' 1,89 · 36' 2,70; más de 0,5: 36' 1,35
 insert into futbol.corners_cuotas_manual (alerta_id, ts, minuto, corners, linea, cuota)
-select 79, a.ts + make_interval(mins => v.m - a.minuto), v.m, 0, 1.5, v.c
-from futbol.alertas_corners a, (values (25, 1.30), (29, 1.66), (32, 1.89)) v(m, c)
+select 79, a.ts + make_interval(mins => v.m - a.minuto), v.m, 0, v.l, v.c
+from futbol.alertas_corners a, (values (25, 1.5, 1.30), (29, 1.5, 1.66), (32, 1.5, 1.89), (36, 1.5, 2.70), (36, 0.5, 1.35)) v(m, l, c)
 where a.id = 79 and a.local ilike '%corinthians%'
   and not exists (select 1 from futbol.corners_cuotas_manual where alerta_id = 79);
