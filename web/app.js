@@ -817,8 +817,11 @@ async function desactivarPush() {
 // Pantallas de Control (solo administrador): se abren desde la pestaña Control.
 const DE_CONTROL = new Set(["vivo", "radar", "alertas", "candidatos", "rendimiento", "ligas", "ajustes", "amigos", "corners", "laboratorio", "agenda"]);
 let turno = 0;
+let RUTA_PARAM = null;
 async function navegar(silencioso = false) {
-  const pedida = location.hash.replace("#", "") || "ahora";
+  // "#corners/79" → pantalla corners con parámetro 79 (la push de córners abre su propio aviso)
+  const [pedida, param] = (location.hash.replace("#", "") || "ahora").split("/");
+  RUTA_PARAM = param ?? null;
   let nombre = pantallas[pedida] ? pedida : "ahora";
   if ((DE_CONTROL.has(nombre) || nombre === "control") && !esAdmin()) nombre = "ahora";
   const pestaña = DE_CONTROL.has(nombre) ? "control" : nombre;

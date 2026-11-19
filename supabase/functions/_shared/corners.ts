@@ -243,7 +243,7 @@ export async function cicloCorners(args: {
       : `Córners 2T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. ${fav} es favorito y va perdiendo. Van ${total} córners. Entrada: más de ${coma(linea)}${precio}.`;
     const n = cfg.corners_push === false ? 0 : await notificar({
       titulo: ligaFS(p.liga).txt,
-      cuerpo, url: "./#corners", tag: `corner-${al.id}`,
+      cuerpo, url: `./#corners/${al.id}`, tag: `corner-${al.id}`,
     }, { soloAdmin: true });
     await sql`update futbol.alertas_corners set push_enviados = ${n} where id = ${al.id}`;
     log(`córners: aviso ${mercado} ${p.local}-${p.visitante} min ${minuto}, línea ${linea}, cuota ${cuota ?? motivoSinCuota}`);
@@ -331,7 +331,7 @@ async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void
     if (conPush) await notificar({
       titulo: ligaFS(a.liga).txt,
       cuerpo: `${gano ? "✅ Salió" : "❌ No salió"}, córners${tiempo}: ${a.local} ${p.gl}–${p.gv} ${a.visitante}: ${ahora} córners${tiempo} (necesitaba ${meta})${gano && em.minuto ? `, al ${em.minuto}'` : ""}.${a.cuota ? ` Cuota ${cuotaTxt(a.cuota)}.` : ""}`,
-      url: "./#corners", tag: `corner-${a.id}`,
+      url: `./#corners/${a.id}`, tag: `corner-${a.id}`,
     }, { soloAdmin: true });
     log(`córners: alerta ${a.id} ${gano ? "acierto" : "fallo"} (${ahora}/${meta})`);
   }
