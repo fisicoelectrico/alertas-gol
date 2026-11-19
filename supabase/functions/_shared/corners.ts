@@ -291,3 +291,48 @@ async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void
     log(`córners: alerta ${a.id} ${gano ? "acierto" : "fallo"} (${ahora}/${meta})`);
   }
 }
+
+// =====================================================================
+// Córners por tiempo de CADA partido terminado (DECISIONES 45, 19 nov 2026).
+// Un pedido a Flashscore (df_st) por partido de liga habilitada. Si Flashscore aún no tiene
+// estadísticas (o la liga no las publica) se reintenta hasta 3 veces, con 30 min entre intentos,
+// y luego queda como 'sin_datos'. Busca hacia atrás corners_partido_dias, así que se rellena solo.
+// =====================================================================
+export async function guardarCornersPartidos(cfg: Config, log: (s: string) => void): Promise<number> {
+  if (String(cfg.corners_partido_activo ?? "true") === "false") return 0;
+  const max = Math.max(0, Number(cfg.corners_partido_max_ciclo ?? 12));
+  const dias = Math.max(1, Number(cfg.corners_partido_dias ?? 7));
+  if (!max) return 0;
+  const lista = await sql`
+    select p.fixture_id, p.liga_id, p.kickoff, f.fs_id, c.intentos
+    from futbol.partidos p join futbol.ligas l on l.id = p.liga_id and l.habilitada
+    join lateral (select fs_id from futbol.fs_partidos f where f.fixture_id = p.fixture_id order by creado desc limit 1) f on true
+    left join futbol.corners_partido c on c.fixture_id = p.fixture_id
+    where p.estado in ('FT', 'AET', 'PEN') and p.kickoff > now() - make_interval(days => ${dias})
+      and (c.fixture_id is null or (c.estado = 'pendiente' and c.intentos < 3 and c.ultimo_intento < now() - interval '30 minutes'))
+    order by c.fixture_id is not null, p.kickoff desc
+    limit ${max}`;
+  let ok = 0;
+  for (const r of lista) {
+    let c: FS.CornersFS | null = null;
+    try { c = await FS.corners(r.fs_id); } catch (e) { log(`córners partido ${r.fixture_id}: ${(e as Error).message}`); }
+    const tiene = !!c?.partido;
+    const intentos = Number(r.intentos ?? 0) + 1;
+    const estado = tiene ? "ok" : intentos >= 3 ? "sin_datos" : "pendiente";
+    // Si Flashscore trae el total y el 1T pero no el 2T, el 2T es la resta
+    const t1 = c?.t1 ?? null, tot = c?.partido ?? null;
+    const t2 = c?.t2 ?? (t1 && tot ? [tot[0] - t1[0], tot[1] - t1[1]] : null);
+    await sql`insert into futbol.corners_partido (fixture_id, fs_id, liga_id, kickoff, t1_local, t1_visitante, t2_local, t2_visitante,
+                total_local, total_visitante, estado, intentos, ultimo_intento, leido_ts)
+              values (${r.fixture_id}, ${r.fs_id}, ${r.liga_id}, ${r.kickoff}, ${t1?.[0] ?? null}, ${t1?.[1] ?? null},
+                ${t2?.[0] ?? null}, ${t2?.[1] ?? null}, ${tot?.[0] ?? null}, ${tot?.[1] ?? null}, ${estado}, ${intentos}, now(),
+                ${tiene ? new Date() : null})
+              on conflict (fixture_id) do update set t1_local = excluded.t1_local, t1_visitante = excluded.t1_visitante,
+                t2_local = excluded.t2_local, t2_visitante = excluded.t2_visitante, total_local = excluded.total_local,
+                total_visitante = excluded.total_visitante, estado = excluded.estado, intentos = excluded.intentos,
+                ultimo_intento = excluded.ultimo_intento, leido_ts = excluded.leido_ts`;
+    if (tiene) ok++;
+  }
+  if (lista.length) log(`córners por tiempo: ${ok}/${lista.length} partidos guardados`);
+  return ok;
+}

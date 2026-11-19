@@ -534,7 +534,16 @@ async function cornersLab() {
     from futbol.corners_chequeos group by 1`;
   const [hoy] = await sql`select count(*) filter (where api_consultada)::int as consultas_hoy from futbol.alertas_corners
                           where ts >= date_trunc('day', now() at time zone 'utc') at time zone 'utc'`;
-  return { params, alertas, resumen, base, consultas_hoy: hoy.consultas_hoy };
+  // Base completa de córners por tiempo (DECISIONES 45)
+  const [porTiempo] = await sql`
+    select count(*) filter (where estado = 'ok')::int as partidos, count(*) filter (where estado = 'sin_datos')::int as sin_datos,
+           count(*) filter (where estado = 'pendiente')::int as pendientes,
+           round(avg(t1_local + t1_visitante) filter (where estado = 'ok'), 2) as prom_1t,
+           round(avg(t2_local + t2_visitante) filter (where estado = 'ok'), 2) as prom_2t,
+           round(avg(total_local + total_visitante) filter (where estado = 'ok'), 2) as prom_total,
+           min(kickoff) filter (where estado = 'ok') as desde
+    from futbol.corners_partido c join futbol.ligas l on l.id = c.liga_id and l.habilitada`;
+  return { params, alertas, resumen, base, consultas_hoy: hoy.consultas_hoy, por_tiempo: porTiempo };
 }
 
 // ---------- Laboratorio de goles y córners (DECISIONES 40): solo administradores ----------

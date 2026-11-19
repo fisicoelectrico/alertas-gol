@@ -44,7 +44,7 @@ import * as A from "../_shared/algoritmo.ts";
 import { notificar } from "../_shared/notificar.ts";
 import { avisoAlerta, avisoResultado, avisosEnVivo } from "../_shared/avisos.ts";
 import * as FS from "../_shared/flashscore.ts";
-import { cicloCorners } from "../_shared/corners.ts";
+import { cicloCorners, guardarCornersPartidos } from "../_shared/corners.ts";
 import { cicloCuotasVivo, cuotaOverFS, salud } from "../_shared/cuotasvivo.ts";
 import { cicloLab, vigilados } from "../_shared/lab.ts";
 import { registrar } from "../_shared/identidad.ts";
@@ -981,6 +981,9 @@ Deno.serve(async (req) => {
       // 5b. Mercado experimental de córners, solo admin (DECISIONES 37). Aislado: si falla, el radar de goles sigue.
       try { await cicloCorners({ cfg, vivosFS, conocidos, api, log }); }
       catch (e) { log(`córners: ${(e as Error).message}`); }
+      // 5b'. Córners del 1T, 2T y total de cada partido terminado de ligas habilitadas (DECISIONES 45)
+      try { await guardarCornersPartidos(cfg, log); }
+      catch (e) { log(`córners por tiempo: ${(e as Error).message}`); }
 
       // 5c. Cuotas en vivo de Flashscore (DECISIONES 40): foto en cada gol, en el laboratorio cada 2 min,
       // al descanso, candidatos cada 2 min y el resto cada 10, con tope de consultas. Luego el laboratorio
