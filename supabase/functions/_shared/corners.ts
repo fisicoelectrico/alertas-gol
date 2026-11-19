@@ -31,6 +31,7 @@ import * as FS from "./flashscore.ts";
 import * as A from "./algoritmo.ts";
 import { ApiFootball } from "./apifootball.ts";
 import { notificar, cuotaTxt, ligaFS } from "./notificar.ts";
+import { umbrales } from "./lab.ts";
 
 type Mercado = "c1t_cero20" | "c1t_uno" | "c2t_fav77";
 const es1T = (m: string) => m.startsWith("c1t");
@@ -235,7 +236,8 @@ export async function cicloCorners(args: {
     const alt = cuota ? null : alternativas(vistos, es1T(mercado) ? "1T" : "partido", total + objetivo);
     const precio = cuota ? `, paga ${cuotaTxt(cuota)}` : alt ? `. Sin esa línea: ${alt}` : "";
     const cuerpo = mercado === "c1t_cero20"
-      ? `Córners 1T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. Sin córners todavía. Entrada: más de ${coma(linea)} córners en el 1T${precio}.`
+      ? `Córners 1T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. Sin córners todavía. Entrada: más de ${coma(linea)} córners en el 1T${precio}.` +
+        await cuotaMinimaCero(cfg, log)
       : mercado === "c1t_uno"
       ? `Córners 1T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. Va 1 córner. Todavía se puede entrar: más de ${coma(linea)} córners en el 1T (falta 1)${precio}.`
       : `Córners 2T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. ${fav} es favorito y va perdiendo. Van ${total} córners. Entrada: más de ${coma(linea)}${precio}.`;
@@ -246,6 +248,28 @@ export async function cicloCorners(args: {
     await sql`update futbol.alertas_corners set push_enviados = ${n} where id = ${al.id}`;
     log(`córners: aviso ${mercado} ${p.local}-${p.visitante} min ${minuto}, línea ${linea}, cuota ${cuota ?? motivoSinCuota}`);
   }
+}
+
+/**
+ * Cuota mínima para tomar en el aviso de 0 córners (DECISIONES 47, Fredy 19 nov). Mismo criterio que goles:
+ * sale de la base (futbol.lab_umbrales, recalculada cada hora) y va condicionada a "iba 0 córners".
+ *   justa    = 1 / acierto            (config corners_cuota_min_tipo = "justa", por defecto)
+ *   prudente = 1 / límite bajo Wilson (= "umbral" del laboratorio de goles)
+ * Solo líneas 1,5 y 2,5 del 1T (3,5 todavía no se maneja). Si algo falla, la push sale sin esta línea.
+ */
+async function cuotaMinimaCero(cfg: Config, log: (s: string) => void): Promise<string> {
+  try {
+    const U = await umbrales(log);
+    const prudente = String(cfg.corners_cuota_min_tipo ?? "justa") === "prudente";
+    const una = (est: string, txt: string) => {
+      const u = U.get(est);
+      const v = Number(prudente ? u?.umbral : u?.cuota_justa);
+      if (!u || !Number.isFinite(v) || v <= 0) return null;
+      return `${txt} desde ${coma(Number(v.toFixed(2)))} (${u.aciertos} de ${u.n})`;
+    };
+    const partes = [una("c1t_cero20", "más de 1,5"), una("c1t_cero20_o25", "más de 2,5")].filter(Boolean);
+    return partes.length ? `\nCuota mínima${prudente ? " prudente" : ""} con 0 córners: ${partes.join(" · ")}.` : "";
+  } catch (e) { log(`córners: cuota mínima: ${(e as Error).message}`); return ""; }
 }
 
 async function chequeo(p: FS.PartidoFS, mercado: Mercado, minuto: number, ck: [number, number] | null, alerto: boolean, motivo: string | null) {
