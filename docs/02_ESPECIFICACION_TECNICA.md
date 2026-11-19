@@ -158,3 +158,8 @@ Cada punto reemplaza o precisa lo dicho arriba. El porqué detallado está en `D
 - **Agenda:** `futbol.agenda` se llena desde Flashscore (`fs_id`, `cuota_pre_consultada`, `casas`); vista `v_agenda_favoritos`; pantalla Control → Favoritos de hoy y mañana.
 - **Resolución:** acierto si el total final supera `goles_al_alertar`; minuto del gol desde las incidencias de Flashscore, lado desde `cambios_marcador`; anulada a las 8 h sin final.
 - Detalle y porqués: DECISIONES 42.
+
+## 19. Cambios de la versión 2.1 (19 nov 2026, pedidos por Fredy)
+- **API-Football vuelve solo para cuotas de córners:** fotos de `/odds/live` (1 consulta = todos los partidos en vivo), repartidas en el horario hasta `corners_api_fotos_max_dia` (85) dentro del presupuesto de 100/día. Tabla `futbol.corners_cuotas_api`; emparejamiento con Flashscore en `futbol.api_fs_pareja` (`/fixtures?live=all`, solo para ids nuevos). El resto del escáner sigue 100 % Flashscore.
+- **Córners sin cuota no notifican:** el aviso se guarda (datos e histórico), pero sin push. El acierto y la cuota mínima de córners solo cuentan avisos con cuota de córners (`hay_mercado = true`).
+- Detalle y porqués: DECISIONES 51.

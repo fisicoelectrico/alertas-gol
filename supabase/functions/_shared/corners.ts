@@ -22,6 +22,8 @@
 //   · Cuota: Flashscore no trae mercado de córners (verificado el 15 nov). API-Football sí, en /odds/live
 //     ("Total Corners", "Asian Corners", "Match Corners"…). Se pide UNA vez por aviso, con tope diario
 //     corners_api_max_dia. Sin cupo o sin pareja en API-Football, el aviso igual sale y queda "sin cuota".
+//     Desde DECISIONES 51 (19 nov) la cuota sale de la foto de /odds/live (cornersapi.ts) y, por regla de
+//     Fredy, un aviso SIN cuota de córners de ese tiempo se guarda pero NO manda push.
 //
 // Por qué se guardan también los partidos que NO avisan (futbol.corners_chequeos): para tener la tasa base
 // ("¿cuántos partidos llegan al 20' sin córners?") y poder comparar después.
@@ -32,6 +34,7 @@ import * as A from "./algoritmo.ts";
 import { ApiFootball } from "./apifootball.ts";
 import { notificar, cuotaTxt, ligaFS } from "./notificar.ts";
 import { umbrales } from "./lab.ts";
+import { fotoReciente, ofertaCorners } from "./cornersapi.ts";
 
 type Mercado = "c1t_cero20" | "c1t_uno" | "c2t_fav77";
 const es1T = (m: string) => m.startsWith("c1t");
@@ -111,8 +114,11 @@ function alternativas(vistos: Record<string, Record<string, number>> | null, alc
 /** Un ciclo del mercado de córners. Se llama desde el ciclo Flashscore del escáner. */
 export async function cicloCorners(args: {
   cfg: Config; vivosFS: FS.PartidoFS[]; conocidos: Map<string, any>; api: ApiFootball; log: (s: string) => void;
+  /** Toma una foto de /odds/live fuera de turno (DECISIONES 51). Se usa como mucho una vez por ciclo. */
+  fotoForzada?: () => Promise<unknown>;
 }) {
-  const { cfg, vivosFS, conocidos, api, log } = args;
+  const { cfg, vivosFS, conocidos, api, log, fotoForzada } = args;
+  let forzadaUsada = false;
   await resolverCorners(vivosFS, log, cfg.corners_push !== false);
   if (cfg.corners_activo !== true) return;
 
@@ -202,7 +208,29 @@ export async function cicloCorners(args: {
     const linea = total + objetivo - 0.5;   // 0 córners → 1,5; 1 córner (c1t_uno) → 1,5; 7 córners → 8,5
     let cuota: number | null = null, mercadoNombre: string | null = null, hayMercado: boolean | null = null;
     let vistos: any = null, consultada = false, motivoSinCuota: string | null = null;
-    if (cfg.corners_cuota === false) motivoSinCuota = "cuota_apagada";
+    let lineaOfrecida: number | null = null, cuotaOfrecida: number | null = null, fotoId: number | null = null;
+    const alcance = es1T(mercado) ? "1T" : "partido";
+    if (cfg.corners_api_fotos === true) {
+      // DECISIONES 51: la cuota sale de la foto de /odds/live (todos los partidos en 1 consulta). Si no hay
+      // una reciente de este partido, se toma una fuera de turno (máximo una por ciclo, dentro del cupo).
+      const vig = Number(cfg.corners_api_fotos_vigencia_min ?? 4);
+      let f = await fotoReciente(p.id, vig);
+      if (!f && fotoForzada && !forzadaUsada) {
+        forzadaUsada = true;
+        try { await fotoForzada(); } catch (e) { log(`córners: foto forzada: ${(e as Error).message}`); }
+        f = await fotoReciente(p.id, vig);
+      }
+      if (!f) motivoSinCuota = "sin_foto";
+      else {
+        const o = ofertaCorners(f.mercados, alcance, linea);
+        fotoId = f.id; consultada = true; hayMercado = o.hay;
+        vistos = Object.fromEntries(f.mercados.map((m) => [m.name, Object.fromEntries(m.values.map((v) => [`${v.value}${v.handicap != null ? " " + v.handicap : ""}`, Number(v.odd)]))]));
+        if (o.exacta) { cuota = o.exacta.cuota; mercadoNombre = o.exacta.mercado; }
+        else if (o.cercana) { lineaOfrecida = o.cercana.linea; cuotaOfrecida = o.cercana.cuota; mercadoNombre = o.cercana.mercado; }
+        if (!o.hay) motivoSinCuota = f.mercados.length ? "sin_mercado_de_ese_tiempo" : "sin_mercado";
+        else if (!o.exacta) motivoSinCuota = "sin_esa_linea";
+      }
+    } else if (cfg.corners_cuota === false) motivoSinCuota = "cuota_apagada";
     else if (!fx || fx < 0) motivoSinCuota = "sin_pareja_api";   // id negativo = solo Flashscore (DECISIONES 42)
     else if (cupoApi <= 0) motivoSinCuota = "tope_diario";
     else if (api.quedan() < 1) motivoSinCuota = "sin_presupuesto_api";
@@ -221,10 +249,12 @@ export async function cicloCorners(args: {
     const [al] = await sql`
       insert into futbol.alertas_corners (mercado, version, parametros, fs_id, fixture_id, liga, local, visitante, favorito,
         minuto, goles_local, goles_visitante, corners_local, corners_visitante, linea, objetivo,
-        api_consultada, hay_mercado, cuota, mercado_nombre, motivo_sin_cuota, mercados_vistos, stats)
+        api_consultada, hay_mercado, cuota, mercado_nombre, motivo_sin_cuota, mercados_vistos, stats,
+        linea_ofrecida, cuota_ofrecida, foto_id)
       values (${mercado}, ${P.version}, ${sql.json(P as any)}, ${p.id}, ${fx}, ${p.liga}, ${p.local}, ${p.visitante}, ${favorito},
         ${minuto}, ${p.gl}, ${p.gv}, ${actual[0]}, ${actual[1]}, ${linea}, ${objetivo},
-        ${consultada}, ${hayMercado}, ${cuota}, ${mercadoNombre}, ${motivoSinCuota}, ${vistos ? sql.json(vistos) : null}, ${sql.json(ck.extra as any)})
+        ${consultada}, ${hayMercado}, ${cuota}, ${mercadoNombre}, ${motivoSinCuota}, ${vistos ? sql.json(vistos) : null}, ${sql.json(ck.extra as any)},
+        ${lineaOfrecida}, ${cuotaOfrecida}, ${fotoId})
       on conflict (fs_id, mercado) do nothing
       returning id`;
     await chequeo(p, mercado, minuto, actual, true, null);
@@ -233,20 +263,23 @@ export async function cicloCorners(args: {
 
     // Sin la línea exacta, las alternativas del mismo tiempo (visto en el 1T: "más de 2" y "exactamente 2").
     // La fuente de la cuota no se muestra (Fredy, 15 nov).
-    const alt = cuota ? null : alternativas(vistos, es1T(mercado) ? "1T" : "partido", total + objetivo);
-    const precio = cuota ? `, paga ${cuotaTxt(cuota)}` : alt ? `. Sin esa línea: ${alt}` : "";
+    const alt = cuota || cuotaOfrecida ? null : alternativas(vistos, alcance, total + objetivo);
+    const precio = cuota ? `, paga ${cuotaTxt(cuota)}`
+      : cuotaOfrecida && lineaOfrecida ? `. No está esa línea; la casa ofrece más de ${coma(lineaOfrecida)} a ${cuotaTxt(cuotaOfrecida)}`
+      : alt ? `. Sin esa línea: ${alt}` : "";
     const cuerpo = mercado === "c1t_cero20"
       ? `Córners 1T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. Sin córners todavía. Entrada: más de ${coma(linea)} córners en el 1T${precio}.` +
         await cuotaMinimaCero(cfg, log)
       : mercado === "c1t_uno"
       ? `Córners 1T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. Va 1 córner. Todavía se puede entrar: más de ${coma(linea)} córners en el 1T (falta 1)${precio}.`
       : `Córners 2T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. ${fav} es favorito y va perdiendo. Van ${total} córners. Entrada: más de ${coma(linea)}${precio}.`;
-    const n = cfg.corners_push === false ? 0 : await notificar({
+    // Regla de Fredy (19 nov): sin cuota de córners para ese tiempo NO hay push. El aviso igual queda guardado.
+    const n = cfg.corners_push === false || hayMercado !== true ? 0 : await notificar({
       titulo: ligaFS(p.liga).txt,
       cuerpo, url: `./#corners/${al.id}`, tag: `corner-${al.id}`,
     }, { soloAdmin: true });
     await sql`update futbol.alertas_corners set push_enviados = ${n} where id = ${al.id}`;
-    log(`córners: aviso ${mercado} ${p.local}-${p.visitante} min ${minuto}, línea ${linea}, cuota ${cuota ?? motivoSinCuota}`);
+    log(`córners: aviso ${mercado} ${p.local}-${p.visitante} min ${minuto}, línea ${linea}, cuota ${cuota ?? motivoSinCuota}${n ? "" : " (sin push)"}`);
   }
 }
 
@@ -288,7 +321,7 @@ async function chequeo(p: FS.PartidoFS, mercado: Mercado, minuto: number, ck: [n
  * desenlace se anula (aplazado, suspendido o sin datos), y no cuenta para el acierto.
  */
 async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void, conPush: boolean) {
-  const pend = await sql`select id, mercado, fs_id, liga, local, visitante, corners_local + corners_visitante as ck0, objetivo, cuota, ts
+  const pend = await sql`select id, mercado, fs_id, liga, local, visitante, corners_local + corners_visitante as ck0, objetivo, cuota, ts, push_enviados
                          from futbol.alertas_corners where resultado = 'pendiente' order by ts limit 20`;
   if (!pend.length) return;
   const hoy = new Map(vivosFS.map((p) => [p.id, p]));
@@ -328,7 +361,7 @@ async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void
                         where id = ${a.id} and resultado = 'pendiente' returning id`;
     if (!r.length) continue;
     const tiempo = es1T(a.mercado) ? " en el 1T" : "";
-    if (conPush) await notificar({
+    if (conPush && Number(a.push_enviados ?? 0) > 0) await notificar({   // sin push del aviso, tampoco del cierre
       titulo: ligaFS(a.liga).txt,
       cuerpo: `${gano ? "✅ Salió" : "❌ No salió"}, córners${tiempo}: ${a.local} ${p.gl}–${p.gv} ${a.visitante}: ${ahora} córners${tiempo} (necesitaba ${meta})${gano && em.minuto ? `, al ${em.minuto}'` : ""}.${a.cuota ? ` Cuota ${cuotaTxt(a.cuota)}.` : ""}`,
       url: `./#corners/${a.id}`, tag: `corner-${a.id}`,

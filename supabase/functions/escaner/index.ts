@@ -45,6 +45,7 @@ import { notificar } from "../_shared/notificar.ts";
 import { avisoAlerta, avisoResultado, avisosEnVivo } from "../_shared/avisos.ts";
 import * as FS from "../_shared/flashscore.ts";
 import { cicloCorners, guardarCornersPartidos } from "../_shared/corners.ts";
+import { fotoCornersApi } from "../_shared/cornersapi.ts";
 import { cicloCuotasVivo, cuotaOverFS, salud } from "../_shared/cuotasvivo.ts";
 import { cicloLab, vigilados } from "../_shared/lab.ts";
 import { registrar } from "../_shared/identidad.ts";
@@ -979,7 +980,11 @@ Deno.serve(async (req) => {
       await cargarInfo(idsVivosFS);
 
       // 5b. Mercado experimental de córners, solo admin (DECISIONES 37). Aislado: si falla, el radar de goles sigue.
-      try { await cicloCorners({ cfg, vivosFS, conocidos, api, log }); }
+      // 5a'. Foto de cuotas de córners de TODOS los partidos en vivo (1 consulta de /odds/live, DECISIONES 51).
+      // Tiene su propio cupo dentro del presupuesto: funciona aunque api_football_activa = false.
+      try { (detalle as any).corners_api = await fotoCornersApi({ cfg, vivosFS, log }); }
+      catch (e) { log(`córners api: ${(e as Error).message}`); }
+      try { await cicloCorners({ cfg, vivosFS, conocidos, api, log, fotoForzada: () => fotoCornersApi({ cfg, vivosFS, log, forzada: true }) }); }
       catch (e) { log(`córners: ${(e as Error).message}`); }
       // 5b'. Córners del 1T, 2T y total de cada partido terminado de ligas habilitadas (DECISIONES 45)
       try { await guardarCornersPartidos(cfg, log); }

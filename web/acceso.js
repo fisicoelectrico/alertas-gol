@@ -784,7 +784,7 @@ Object.assign(pantallas, {
     const NOMBRE = { c1t_cero20: "1T · 0 córners al 20'", c1t_uno: "1T · 1 córner al 28'", c2t_fav77: "2T · favorito perdiendo al 77'" };
     const RES = { acierto: "✅ Salió", fallo: "❌ No salió", pendiente: "⏳ En juego", anulada: "Anulada" };
     const SIN = { sin_pareja_api: "sin pareja en API", tope_diario: "tope diario de consultas", sin_presupuesto_api: "sin cupo de API",
-      sin_mercado: "la API no ofrecía córners", sin_mercado_de_ese_tiempo: "solo córners de otro tiempo", sin_esa_linea: "no estaba esa línea", error_api: "error de la API", cuota_apagada: "lectura de cuota apagada" };
+      sin_mercado: "la API no ofrecía córners", sin_mercado_de_ese_tiempo: "solo córners de otro tiempo", sin_esa_linea: "no estaba esa línea", error_api: "error de la API", cuota_apagada: "lectura de cuota apagada", sin_foto: "sin foto de cuotas de ese partido" };
     const pct = (a, b) => b ? `${Math.round(a / b * 100)}%` : "–";
     setTimeout(() => {
       const guardarCk = async () => {
@@ -807,7 +807,7 @@ Object.assign(pantallas, {
       const res = x.aciertos + x.fallos, b = base[x.mercado];
       const ganaImpl = x.resueltas_con_cuota && x.implicita_pct != null ? (x.aciertos_con_cuota / x.resueltas_con_cuota * 100 > Number(x.implicita_pct)) : null;
       return `<tr><td>${esc(NOMBRE[x.mercado] || x.mercado)}<small class="sub">${esc(x.version)}${b ? ` · ${b.avisaron}/${b.revisados} revisados avisaron` : ""}</small></td>
-        <td>${x.avisos}</td><td>${pct(x.aciertos, res)}<small class="sub">${x.aciertos}/${res}</small></td>
+        <td>${x.avisos}</td><td>${pct(x.aciertos, res)}<small class="sub">${x.aciertos}/${res} con cuota${x.sin_cuota ? ` · ${x.sin_cuota} sin cuota no cuentan` : ""}</small></td>
         <td class="${ganaImpl === null ? "" : ganaImpl ? "pos" : "neg"}">${pct(x.aciertos_con_cuota, x.resueltas_con_cuota)}<small class="sub">vs ${x.implicita_pct ?? "–"}% impl.</small></td>
         <td class="${Number(x.ganancia_u) > 0 ? "pos" : Number(x.ganancia_u) < 0 ? "neg" : ""}">${n(x.ganancia_u)} u</td></tr>`;
     }).join("");
@@ -867,7 +867,8 @@ Object.assign(pantallas, {
           ${a.favorito ? `<small class="sub">favorito: ${esc(a.favorito === "home" ? a.local : a.visitante)}</small>` : ""}</p>
         <small class="sub">${esc(ligaFS(a.liga).fase || "")}${ligaFS(a.liga).fase ? " · " : ""}${hora(a.ts)}</small>
         <p class="nota">Córners al avisar ${a.corners_local + a.corners_visitante} · línea más de ${n(a.linea, 1).replace(".", ",")}
-          · ${a.cuota ? `cuota <b>${n(a.cuota)}</b>` : `sin cuota: ${esc(SIN[a.motivo_sin_cuota] || a.motivo_sin_cuota || "–")}`}
+          · ${a.cuota ? `cuota <b>${n(a.cuota)}</b>` : a.cuota_ofrecida ? `sin esa línea; ofrecía más de ${n(a.linea_ofrecida, 1).replace(".", ",")} a <b>${n(a.cuota_ofrecida)}</b>` : `sin cuota: ${esc(SIN[a.motivo_sin_cuota] || a.motivo_sin_cuota || "–")}`}
+          ${a.push_enviados > 0 ? "" : " · sin push"}
           ${a.corners_final != null ? ` · ahora/final ${a.corners_final}` : ""}${a.nota ? ` · ${esc(a.nota)}` : ""}</p>
         ${cuotasHtml(a)}
       </div>`;
@@ -876,7 +877,8 @@ Object.assign(pantallas, {
     return `<div class="tarjeta">
         ${sw("corners_activo", "<b>Córners (laboratorio)</b>", `Versión ${esc(P.corners_version || "c1")} · detecta, guarda y resuelve el acierto con Flashscore (gratis)`)}
         ${sw("corners_push", "Avisos al celular", "Apagado: sigue juntando datos en silencio")}
-        ${sw("corners_cuota", "Leer la cuota", `1 consulta de API por aviso · hoy ${r.consultas_hoy}/${esc(P.corners_api_max_dia)}. Apagado: 0 consultas`)}
+        ${sw("corners_api_fotos", "Fotos de cuotas (API)", `1 consulta trae las cuotas de córners de todos los partidos en vivo, repartidas en el horario · hoy ${r.fotos?.consultas_hoy ?? 0}/${esc(P.corners_api_fotos_max_dia ?? 85)} consultas, ${r.fotos?.fotos_hoy ?? 0} fotos, ${r.fotos?.con_1t_hoy ?? 0} filas con córners del 1T`)}
+        <p class="nota" style="margin:4px 0">Sin cuota de córners no llega push: el aviso se guarda igual, pero el acierto solo cuenta los que tuvieron cuota.</p>
         <div class="botones"><button class="btn sec" id="btn-corners-sw">Guardar interruptores</button></div>
       </div>
       <div class="titulo-seccion"><h2>Parámetros</h2></div>
@@ -888,7 +890,7 @@ Object.assign(pantallas, {
         ${campo("corners_2t_min_desde", "2T desde el minuto", "Desde cuándo se revisa si el favorito pierde")}
         ${campo("corners_2t_min_hasta", "2T hasta el minuto", "")}
         ${campo("corners_objetivo", "Córners más que se buscan", "La línea es córners actuales + este número − 0,5")}
-        ${campo("corners_api_max_dia", "Consultas de API por día", "Una por aviso, para leer la cuota")}
+        ${campo("corners_api_fotos_max_dia", "Consultas de API por día (fotos)", "Tope de las fotos de cuotas; siempre dentro del presupuesto general")}
         <p class="nota">Cambiar minutos u objetivo abre una versión nueva (c1 → c2) para no mezclar resultados. El tope de consultas y los interruptores no cambian la versión.</p>
         <div class="botones"><button class="btn" id="btn-corners">Guardar</button></div>
       </div>

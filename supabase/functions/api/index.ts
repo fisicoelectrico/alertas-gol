@@ -64,6 +64,8 @@ const EDITABLES = new Set([
   "horas_activas_utc", "fraccion_radar", "max_detalle_escaneo", "stake", "cuotas_siempre", "excluir_reempate", "excluir_roja_fav", "goles_fav_max",
   // Córners (lab, DECISIONES 37)
   "corners_activo", "corners_push", "corners_cuota", "corners_api_max_dia", ...CORNERS_REGLA,
+  // Fotos de cuotas de córners desde /odds/live (DECISIONES 51)
+  "corners_api_fotos", "corners_api_fotos_max_dia",
   // Cuotas en vivo de Flashscore y laboratorio de goles (DECISIONES 40)
   "fs_vivo_activo", "fs_vivo_max_consultas", "fs_vivo_intervalo_min", "fs_vivo_intervalo_cand_min", "fs_fallos_aviso",
   "lab_activo", "lab_push", "lab_gt_minuto", "lab_gt_ventana_min", "lab_intervalo_min", "lab_intervalo_largo_min", "lab_n_min",
@@ -96,7 +98,8 @@ function validarValor(clave: string, v: unknown): boolean {
         .every((k) => typeof (v as any)[k] === "number" && Number.isFinite((v as any)[k]));
   }
   if (clave === "horas_activas_utc") return Array.isArray(v) && v.every((h) => Number.isInteger(h) && h >= 0 && h <= 23);
-  if (clave === "corners_activo" || clave === "corners_push" || clave === "corners_cuota") return typeof v === "boolean";
+  if (clave === "corners_activo" || clave === "corners_push" || clave === "corners_cuota" || clave === "corners_api_fotos") return typeof v === "boolean";
+  if (clave === "corners_api_fotos_max_dia") return typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 94;
   if (clave === "fs_vivo_activo" || clave === "lab_activo" || clave === "lab_push") return typeof v === "boolean";
   if (clave === "fs_vivo_max_consultas") return typeof v === "number" && Number.isInteger(v) && v >= 3 && v <= 60;
   if (clave === "escaneo_activo" || clave === "cuotas_siempre" || clave === "excluir_reempate" || clave === "excluir_roja_fav") return typeof v === "boolean";
@@ -512,13 +515,16 @@ async function cornersLab() {
   const alertas = await sql`
     select id, mercado, version, fixture_id, liga, local, visitante, favorito, ts, minuto, goles_local, goles_visitante,
            corners_local, corners_visitante, linea, objetivo, api_consultada, hay_mercado, cuota, mercado_nombre,
-           motivo_sin_cuota, mercados_vistos, resultado, corners_final, minuto_cierre, cerrada_ts, nota
+           motivo_sin_cuota, mercados_vistos, resultado, corners_final, minuto_cierre, cerrada_ts, nota,
+           linea_ofrecida, cuota_ofrecida, push_enviados
     from futbol.alertas_corners order by ts desc limit 200`;
   const resumen = await sql`
     select mercado, version,
            count(*)::int as avisos,
-           count(*) filter (where resultado = 'acierto')::int as aciertos,
-           count(*) filter (where resultado = 'fallo')::int as fallos,
+           -- Desde DECISIONES 51 el acierto solo cuenta avisos con cuota de córners (hay_mercado); los demás quedan aparte
+           count(*) filter (where resultado = 'acierto' and hay_mercado is true)::int as aciertos,
+           count(*) filter (where resultado = 'fallo' and hay_mercado is true)::int as fallos,
+           count(*) filter (where resultado in ('acierto', 'fallo') and hay_mercado is not true)::int as sin_cuota,
            count(*) filter (where resultado = 'pendiente')::int as pendientes,
            count(*) filter (where cuota is not null)::int as con_cuota,
            count(*) filter (where cuota is not null and resultado = 'acierto')::int as aciertos_con_cuota,
@@ -547,7 +553,16 @@ async function cornersLab() {
   const ids = alertas.map((a: any) => a.id);
   const cuotas = ids.length ? await sql`select id, alerta_id, ts, minuto, corners, linea, cuota from futbol.corners_cuotas_manual
                                         where alerta_id = any(${ids}::bigint[]) order by alerta_id, minuto, ts` : [];
-  return { params, alertas, resumen, base, consultas_hoy: hoy.consultas_hoy, por_tiempo: porTiempo, cuotas_manual: cuotas };
+  // Fotos de /odds/live (DECISIONES 51): consultas de hoy y partidos fotografiados
+  const [fotos] = await sql`select count(distinct ts)::int as fotos_hoy, count(*)::int as filas_hoy,
+                                   count(*) filter (where fs_id is not null)::int as emparejadas_hoy,
+                                   count(*) filter (where t1_linea is not null or t1_3w_linea is not null)::int as con_1t_hoy,
+                                   max(ts) as ultima
+                            from futbol.corners_cuotas_api where ts >= date_trunc('day', now() at time zone 'utc') at time zone 'utc'`;
+  const consApi = params.corners_api_consultas_hoy;
+  const consultasFotos = consApi && consApi.fecha === new Date().toISOString().slice(0, 10) ? Number(consApi.n) : 0;
+  return { params, alertas, resumen, base, consultas_hoy: hoy.consultas_hoy, por_tiempo: porTiempo, cuotas_manual: cuotas,
+           fotos: { ...fotos, consultas_hoy: consultasFotos } };
 }
 
 /** Anotar (o borrar) una cuota de córners vista por el administrador en su casa de apuestas. */
