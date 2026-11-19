@@ -766,7 +766,56 @@ Object.assign(pantallas, {
         <td class="${ganaImpl === null ? "" : ganaImpl ? "pos" : "neg"}">${pct(x.aciertos_con_cuota, x.resueltas_con_cuota)}<small class="sub">vs ${x.implicita_pct ?? "–"}% impl.</small></td>
         <td class="${Number(x.ganancia_u) > 0 ? "pos" : Number(x.ganancia_u) < 0 ? "neg" : ""}">${n(x.ganancia_u)} u</td></tr>`;
     }).join("");
-    const fila = (a) => `<div class="tarjeta ${a.resultado === "acierto" ? "acierto" : a.resultado === "fallo" ? "fallo" : ""}">
+    // Cuotas anotadas a mano (DECISIONES 48): la push abre #corners/<id> y aquí se escribe la cuota de la casa
+    const cuotasDe = {};
+    (r.cuotas_manual || []).forEach((c) => (cuotasDe[c.alerta_id] ||= []).push(c));
+    const foco = RUTA_PARAM ? Number(RUTA_PARAM) : null;
+    const coma1 = (x) => n(x, 1).replace(".", ",");
+    const minAhora = (a) => {
+      const est = Number(a.minuto) + Math.floor((Date.now() - new Date(a.ts).getTime()) / 60000);
+      return Math.max(Number(a.minuto), Math.min(est, a.mercado.startsWith("c1t") ? 45 : 90));
+    };
+    const cuotasHtml = (a) => {
+      const cs = cuotasDe[a.id] || [];
+      const lista = cs.length ? `<p class="nota" style="margin:4px 0">Cuotas anotadas: ${cs.map((c) =>
+        `${c.minuto}' más de ${coma1(c.linea)} <b>${n(c.cuota)}</b>${c.corners != null ? ` (${c.corners} c.)` : ""} <a href="#" data-borrar-cuota="${c.id}" title="Borrar" aria-label="Borrar">✕</a>`).join(" · ")}</p>` : "";
+      const abierto = a.resultado === "pendiente" || a.id === foco;
+      if (!abierto) return lista;
+      // Varias líneas a la vez, como las muestra la casa: 1T más de 0,5 / 1,5 / 2,5 / 3,5; 2T alrededor de la línea del aviso
+      const lin = Number(a.linea);
+      const lineas = a.mercado.startsWith("c1t") ? [0.5, 1.5, 2.5, 3.5] : [lin - 1, lin, lin + 1, lin + 2].filter((l) => l > 0);
+      return lista + `<form class="form-cuota" data-alerta="${a.id}" style="margin-top:6px">
+          <div style="display:flex;gap:6px">
+            <label style="flex:1"><small>Minuto</small><input name="minuto" type="number" inputmode="numeric" min="0" max="130" value="${minAhora(a)}" required></label>
+            <label style="flex:1"><small>Córners ahora${a.mercado.startsWith("c1t") ? " (1T)" : ""}</small><input name="corners" type="number" inputmode="numeric" min="0" max="40" value="${esc(a.corners_final ?? (a.corners_local + a.corners_visitante))}"></label>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            ${lineas.map((l) => `<label style="flex:1"><small>más de ${coma1(l)}${l === lin ? " ★" : ""}</small><input name="c_${l}" data-linea="${l}" type="text" inputmode="decimal" placeholder="–"></label>`).join("")}
+          </div>
+          <small class="sub">Escribe solo las cuotas que veas; las vacías no se guardan. ★ = la línea del aviso.</small>
+          <div class="botones"><button class="btn" type="submit">Anotar cuotas</button></div>
+        </form>`;
+    };
+    setTimeout(() => {
+      document.querySelectorAll(".form-cuota").forEach((f) => f.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const d = Object.fromEntries(new FormData(f));
+        const lineas = [...f.querySelectorAll("[data-linea]")].filter((i) => i.value.trim())
+          .map((i) => ({ linea: Number(i.dataset.linea), cuota: i.value.trim() }));
+        if (!lineas.length) return toast("Escribe al menos una cuota");
+        const x = await conPin((pin) => post("/admin/corners-cuota", { pin, alerta_id: Number(f.dataset.alerta), minuto: Number(d.minuto),
+          corners: d.corners === "" ? null : Number(d.corners), lineas }));
+        if (x) { toast(`Anotadas ${lineas.length} cuota${lineas.length > 1 ? "s" : ""} al ${d.minuto}'`); navegar(true); }
+      }));
+      document.querySelectorAll("[data-borrar-cuota]").forEach((b) => b.addEventListener("click", async (e) => {
+        e.preventDefault();
+        if (!confirm("¿Borrar esa cuota anotada?")) return;
+        const x = await conPin((pin) => post("/admin/corners-cuota", { pin, borrar: Number(b.dataset.borrarCuota) }));
+        if (x) navegar(true);
+      }));
+      if (foco) document.getElementById(`aviso-c-${foco}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    const fila = (a) => `<div id="aviso-c-${a.id}" class="tarjeta ${a.resultado === "acierto" ? "acierto" : a.resultado === "fallo" ? "fallo" : ""}"${a.id === foco ? ' style="outline:2px solid var(--acento, #3b82f6)"' : ""}>
         <div class="liga-top">${esc(ligaFS(a.liga).txt)}</div>
         <div class="fila detalle"><span><b>${esc(NOMBRE[a.mercado] || a.mercado)}</b> · ${esc(a.version)}</span><span>${esc(RES[a.resultado] || a.resultado)}</span></div>
         <p style="margin:6px 0 2px">${esc(a.local)} <b class="num">${a.goles_local}–${a.goles_visitante}</b> ${esc(a.visitante)} · min ${a.minuto}
@@ -775,6 +824,7 @@ Object.assign(pantallas, {
         <p class="nota">Córners al avisar ${a.corners_local + a.corners_visitante} · línea más de ${n(a.linea, 1).replace(".", ",")}
           · ${a.cuota ? `cuota <b>${n(a.cuota)}</b>` : `sin cuota: ${esc(SIN[a.motivo_sin_cuota] || a.motivo_sin_cuota || "–")}`}
           ${a.corners_final != null ? ` · ahora/final ${a.corners_final}` : ""}${a.nota ? ` · ${esc(a.nota)}` : ""}</p>
+        ${cuotasHtml(a)}
       </div>`;
     const sw = (k, t, d) => `<div class="campo"><label for="ck-${k}">${t}<small>${d}</small></label>
           <label class="sw"><input id="ck-${k}" type="checkbox" data-ck="${k}" ${P[k] !== false ? "checked" : ""}><span></span></label></div>`;
@@ -806,6 +856,10 @@ Object.assign(pantallas, {
         <div class="tabla-wrap"><table><thead><tr><th>Partidos</th><th>Prom. 1T</th><th>Prom. 2T</th><th>Prom. total</th></tr></thead>
         <tbody><tr><td>${esc(r.por_tiempo.partidos)}</td><td>${esc(r.por_tiempo.prom_1t ?? "–")}</td><td>${esc(r.por_tiempo.prom_2t ?? "–")}</td><td>${esc(r.por_tiempo.prom_total ?? "–")}</td></tr></tbody></table></div>
         <p class="nota" style="margin:0">${r.por_tiempo.sin_datos ? `${esc(r.por_tiempo.sin_datos)} sin estadísticas en Flashscore. ` : ""}${r.por_tiempo.pendientes ? `${esc(r.por_tiempo.pendientes)} por leer.` : ""}</p></div>` : ""}
+      ${(() => {
+        const arriba = (r.alertas || []).filter((a) => a.resultado === "pendiente" || a.id === foco);
+        return arriba.length ? `<div class="titulo-seccion"><h2>En juego: anota la cuota</h2><small>la que ves en tu casa</small></div>${arriba.map(fila).join("")}` : "";
+      })()}
       <details class="desplegable">
         <summary>Últimos avisos <span class="tenue">(${(r.alertas || []).length})</span></summary>
         ${(r.alertas || []).slice(0, 40).map(fila).join("") || `<p class="nota">Sin avisos todavía.</p>`}
@@ -920,7 +974,11 @@ async function arrancar(despuesDeEntrar = false) {
       const tab = location.hash.replace("#", "") || "ahora";
       if (!document.hidden && ["ahora", "historial", "vivo", "radar", "alertas"].includes(tab) && !document.querySelector(".hoja-fondo, .tutorial")) navegar(true);
     }, REFRESCO_MS);
-    document.addEventListener("visibilitychange", () => { if (!document.hidden && !document.querySelector(".hoja-fondo, .tutorial, .entrar")) navegar(true); });
+    document.addEventListener("visibilitychange", () => {
+      // No repintar si hay cuotas de córners a medio escribir (Fredy va a su casa de apuestas y vuelve)
+      const escribiendo = [...document.querySelectorAll(".form-cuota [data-linea]")].some((i) => i.value.trim());
+      if (!document.hidden && !escribiendo && !document.querySelector(".hoja-fondo, .tutorial, .entrar")) navegar(true);
+    });
   }
   navegar();
 }

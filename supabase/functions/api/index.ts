@@ -543,7 +543,39 @@ async function cornersLab() {
            round(avg(total_local + total_visitante) filter (where estado = 'ok'), 2) as prom_total,
            min(kickoff) filter (where estado = 'ok') as desde
     from futbol.corners_partido c join futbol.ligas l on l.id = c.liga_id and l.habilitada`;
-  return { params, alertas, resumen, base, consultas_hoy: hoy.consultas_hoy, por_tiempo: porTiempo };
+  // Cuotas anotadas a mano desde la tarjeta del aviso (DECISIONES 48)
+  const ids = alertas.map((a: any) => a.id);
+  const cuotas = ids.length ? await sql`select id, alerta_id, ts, minuto, corners, linea, cuota from futbol.corners_cuotas_manual
+                                        where alerta_id = any(${ids}::bigint[]) order by alerta_id, minuto, ts` : [];
+  return { params, alertas, resumen, base, consultas_hoy: hoy.consultas_hoy, por_tiempo: porTiempo, cuotas_manual: cuotas };
+}
+
+/** Anotar (o borrar) una cuota de córners vista por el administrador en su casa de apuestas. */
+async function cuotaCornersManual(body: any, yo: any) {
+  if (body?.borrar != null) {
+    await sql`delete from futbol.corners_cuotas_manual where id = ${Number(body.borrar)}`;
+    return { ok: true };
+  }
+  const alerta = Number(body?.alerta_id), minuto = Number(body?.minuto);
+  const corners = body?.corners === "" || body?.corners == null ? null : Number(body.corners);
+  // Varias líneas de una vez (como las muestra la casa): [{ linea, cuota }]; también acepta una sola { linea, cuota }
+  const crudas: any[] = Array.isArray(body?.lineas) ? body.lineas : [{ linea: body?.linea, cuota: body?.cuota }];
+  if (!Number.isInteger(alerta) || alerta <= 0) return { error: "Aviso inválido" };
+  if (!Number.isInteger(minuto) || minuto < 0 || minuto > 130) return { error: "Minuto inválido" };
+  if (corners != null && (!Number.isInteger(corners) || corners < 0 || corners > 40)) return { error: "Córners inválidos" };
+  if (!crudas.length || crudas.length > 8) return { error: "Entre 1 y 8 cuotas" };
+  const filas = [];
+  for (const x of crudas) {
+    const linea = Number(x?.linea), cuota = Number(String(x?.cuota ?? "").replace(",", "."));
+    if (!Number.isFinite(linea) || linea <= 0 || linea >= 40) return { error: "Línea inválida" };
+    if (!Number.isFinite(cuota) || cuota <= 1 || cuota >= 100) return { error: `La cuota de más de ${linea} debe ser mayor que 1` };
+    filas.push({ alerta_id: alerta, minuto, corners, linea, cuota: Math.round(cuota * 100) / 100, usuario_id: yo?.id ?? null });
+  }
+  const [a] = await sql`select id from futbol.alertas_corners where id = ${alerta}`;
+  if (!a) return { error: "No existe ese aviso" };
+  const r = await sql`insert into futbol.corners_cuotas_manual ${sql(filas, "alerta_id", "minuto", "corners", "linea", "cuota", "usuario_id")}
+                      returning id, alerta_id, ts, minuto, corners, linea, cuota`;
+  return { ok: true, cuotas: r };
 }
 
 // ---------- Laboratorio de goles y córners (DECISIONES 40): solo administradores ----------
@@ -856,6 +888,10 @@ Deno.serve(async (req) => {
         return json({ ok: true });
       }
       if (ruta === "/admin/corners") return json(await cornersLab());
+      if (ruta === "/admin/corners-cuota") {
+        const r = await cuotaCornersManual(body, yo);
+        return json(r, (r as any).error ? 400 : 200);
+      }
       if (ruta === "/admin/laboratorio") return json(await laboratorio());
       if (ruta === "/admin/push-prueba") {
         const n = await notificar({ titulo: "🔔 Prueba de ADN Soccer", cuerpo: "Si ves esto, las notificaciones funcionan.", url: "./#ajustes", tag: "prueba" },
