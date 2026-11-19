@@ -609,6 +609,14 @@ Object.assign(pantallas, {
     const porEst = {};
     for (const u of r.umbrales || []) (porEst[u.estrategia] ??= []).push(u);
     const hoy = (e) => (porEst[e] || []).slice(-1)[0];
+    // Mismo criterio que el escáner (lab.ts, umbralDe): en Más de 1,5 el umbral sube con el minuto del partido,
+    // porque a esa altura ya solo cuentan los partidos que seguían con un gol (menos casos, menos tasa).
+    const TRAMOS = [75, 60, 45, 30];
+    const umbralMin = (e, m) => {
+      if (e === "gt_o15" && m != null) for (const t of TRAMOS) { const u = hoy(`gt_o15_m${t}`); if (m >= t && u?.umbral) return { umbral: Number(u.umbral), tramo: t }; }
+      const u = hoy(e); return { umbral: u?.umbral != null ? Number(u.umbral) : null, tramo: null };
+    };
+    const avisan = Array.isArray(P.lab_push_estrategias) ? P.lab_push_estrategias : ["gt_o15"];
 
     // Gráfica de líneas en SVG (sin librerías). series: [{pts:[{x,y,t}], cls}]
     const grafica = ({ series, umbral, xEtq, yDec = 2, alto = 120, xMin, xMax, aria }) => {
@@ -623,7 +631,7 @@ Object.assign(pantallas, {
       const X = (x) => PL + (x - x0) / Math.max(x1 - x0, 1e-9) * (W - PL - PR);
       const Y = (y) => PT + (1 - (y - y0) / (y1 - y0)) * (H - PT - PB);
       const linea = (s) => s.pts.length > 1 ? `<path class="lab-l ${s.cls}" d="${s.pts.map((p, i) => `${i ? "L" : "M"}${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join(" ")}"/>` : "";
-      const puntos = (s) => s.pts.map((p) => `<circle class="lab-p ${s.cls}" cx="${X(p.x).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="2.6"><title>${esc(p.t || "")}</title></circle>`).join("");
+      const puntos = (s) => s.sinPuntos ? "" : s.pts.map((p) => `<circle class="lab-p ${s.cls}" cx="${X(p.x).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="2.6"><title>${esc(p.t || "")}</title></circle>`).join("");
       const ticks = [y0 + pad, (y0 + y1) / 2, y1 - pad].map((v) => `<text class="lab-t" x="${PL - 4}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end">${n(v, yDec).replace(".", ",")}</text>
         <line class="lab-g" x1="${PL}" x2="${W - PR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/>`).join("");
       return `<svg class="lab-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(aria || "")}">
@@ -665,13 +673,30 @@ Object.assign(pantallas, {
     const curvas = (e) => {
       const ops = (r.oportunidades || []).filter((o) => o.estrategia === e && (o.serie || []).length);
       if (!ops.length) return `<div class="tarjeta vacio"><strong>${esc(NOM[e])}: aún sin curvas</strong>Aparecen cuando un partido de liga habilitada marca antes del ${esc(P.lab_gt_minuto ?? 15)}'. Desde ahí se fotografía la cuota cada ${esc(P.lab_intervalo_min ?? 2)} min los primeros 15 y luego cada ${esc(P.lab_intervalo_largo_min ?? 5)}, hasta el 2.º gol o el final.</div>`;
-      const series = ops.map((o) => ({ cls: o.resultado, pts: o.serie.filter((p) => p.m != null).map((p) => ({ x: p.m - o.minuto_gatillo, y: Number(p.c), t: `${o.local}–${o.visitante} · +${p.m - o.minuto_gatillo}' · ${p.casa} ${c2(p.c)}` })) }));
       const u = hoy(e);
+      // Más de 1,5: eje = minuto del partido, para dibujar el umbral escalonado que de verdad usa el escáner
+      // (antes se dibujaba solo el de "recién el gol" y una curva por encima parecía una entrada que no era).
+      const porMinuto = e === "gt_o15";
+      const series = ops.map((o) => ({ cls: o.resultado, pts: o.serie.filter((p) => p.m != null).map((p) => ({ x: porMinuto ? p.m : p.m - o.minuto_gatillo, y: Number(p.c),
+        t: `${o.local}–${o.visitante} · ${porMinuto ? `min ${p.m}` : `+${p.m - o.minuto_gatillo}'`} · ${p.casa} ${c2(p.c)}${porMinuto ? ` (umbral ahí ${c2(umbralMin(e, p.m).umbral)})` : ""}` })) }));
+      let escalon = null;
+      if (porMinuto && u) {
+        const pts = []; let prev = Number(u.umbral); pts.push({ x: 0, y: prev });
+        for (const t of [30, 45, 60, 75]) { const v = umbralMin(e, t).umbral; if (v == null || v === prev) continue; pts.push({ x: t, y: prev }, { x: t, y: v }); prev = v; }
+        pts.push({ x: 90, y: prev });
+        // Tope visual: un umbral de 6 aplasta las curvas; se corta en 2,5 (el de 75' casi nunca se alcanza)
+        escalon = { cls: "u", sinPuntos: true, pts: pts.map((p) => ({ ...p, y: Math.min(p.y, 2.5) })) };
+      }
+      const vent = Math.min(Number(P.lab_gt_ventana_min ?? 90), 90);
       return `<div class="tarjeta">
         <div class="fila detalle"><span><b>${esc(NOM[e])}</b></span><span class="tenue">${ops.length} partido${ops.length === 1 ? "" : "s"}</span></div>
-        ${grafica({ series, umbral: u ? Number(u.umbral) : null, xEtq: ["gol", `+${Math.min(Number(P.lab_gt_ventana_min ?? 90), 90)} min`], xMin: 0, xMax: Math.min(Number(P.lab_gt_ventana_min ?? 90), 90), alto: 150, aria: `Mejor cuota después del gol, ${NOM[e]}` })}
-        <div class="mini-ley"><span><i class="la"></i>salió</span><span><i class="lf"></i>no salió</span><span><i class="lp"></i>en juego</span><span><i class="lu"></i>umbral de hoy</span></div>
-        <p class="nota">Cada línea es un partido: la mejor cuota entre las casas, minuto a minuto desde el gol. Responde tu pregunta de cuánto tarda en subir la cuota.</p>
+        ${porMinuto
+          ? grafica({ series: escalon ? [escalon, ...series] : series, umbral: null, xEtq: ["0'", "90'"], xMin: 0, xMax: 90, alto: 150, aria: `Mejor cuota por minuto del partido, ${NOM[e]}` })
+          : grafica({ series, umbral: u ? Number(u.umbral) : null, xEtq: ["gol", `+${vent} min`], xMin: 0, xMax: vent, alto: 150, aria: `Mejor cuota después del gol, ${NOM[e]}` })}
+        <div class="mini-ley"><span><i class="la"></i>salió</span><span><i class="lf"></i>no salió</span><span><i class="lp"></i>en juego</span><span><i class="lu"></i>${porMinuto ? "umbral según el minuto" : "umbral de hoy"}</span></div>
+        <p class="nota">${porMinuto
+          ? "Cada línea es un partido: la mejor cuota entre las casas, por minuto del partido. El umbral sube por escalones (30', 45', 60', 75') porque a esa altura solo cuentan los partidos que seguían con un gol. Solo hay aviso si la curva queda por encima del escalón en dos fotos seguidas."
+          : "Cada línea es un partido: la mejor cuota entre las casas, minuto a minuto desde el gol. Esta estrategia no manda aviso al celular, solo registra."}</p>
       </div>`;
     };
 
@@ -688,7 +713,27 @@ Object.assign(pantallas, {
         <small class="sub">${hora(o.ts_inicio)}${o.vigilando ? " · vigilando la cuota" : ""}</small>
         <p class="nota">${o.mejor_cuota ? `Mejor cuota ${c2(o.mejor_cuota)} (${esc(o.mejor_casa)}, min ${o.minuto_mejor})` : "Ninguna casa ofreció esa línea"}
           · umbral ${c2(o.umbral)}${o.alertada ? ` · <b>superó el umbral</b> al ${o.minuto_alerta}' con ${esc(o.casa_alerta)} ${c2(o.cuota_alerta)}` : ""}</p>
+        ${avisoCaso(o)}
       </div>`;
+    // ¿Llegó al celular? Y si no superó el umbral, lo más cerca que estuvo con el umbral de SU minuto.
+    const avisoCaso = (o) => {
+      if (o.alertada) {
+        if (Number(o.push_enviados) > 0) return `<p class="nota">📲 Aviso enviado al celular.</p>`;
+        const porque = !avisan.includes(o.estrategia) ? "esta estrategia solo se registra, no avisa (solo avisa Más de 1,5)"
+          : P.lab_push === false ? "los avisos del laboratorio están apagados" : `la base tenía menos de ${esc(P.lab_n_min ?? 30)} casos`;
+        return `<p class="nota">🔕 Sin aviso al celular: ${porque}.</p>`;
+      }
+      const pts = (o.serie || []).filter((p) => p.m != null);
+      if (!pts.length) return "";
+      let cerca = null;
+      for (const p of pts) { const { umbral } = umbralMin(o.estrategia, p.m); if (!umbral) continue;
+        const r = Number(p.c) / umbral; if (!cerca || r > cerca.r) cerca = { r, p, umbral }; }
+      if (!cerca) return "";
+      // (con el umbral de hoy: el de ese día pudo ser un poco distinto)
+      return cerca.r >= 1
+        ? `<p class="nota">🔕 No avisó: tocó el umbral en una sola foto (${c2(cerca.p.c)} al ${cerca.p.m}', umbral ahí ${c2(cerca.umbral)}) y no se confirmó en la siguiente, porque la cuota bajó o el umbral subió de escalón.</p>`
+        : `<p class="nota">🔕 No avisó: nunca pasó el umbral de su minuto. Lo más cerca: ${c2(cerca.p.c)} al ${cerca.p.m}' (umbral ahí ${c2(cerca.umbral)}).</p>`;
+    };
 
     const salud = (k, t) => { const s = P[k]; const mal = s && s.fallos > 0;
       return `<span><span class="punto ${!s ? "" : mal ? "mal" : "ok"}" style="display:inline-block"></span> ${t}${mal ? ` · ${s.fallos} fallo${s.fallos === 1 ? "" : "s"} seguido${s.fallos === 1 ? "" : "s"}` : ""}</span>`; };
