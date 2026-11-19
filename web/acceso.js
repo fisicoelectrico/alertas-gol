@@ -799,6 +799,11 @@ Object.assign(pantallas, {
       ${resumen ? `<div class="tarjeta tabla-wrap"><table><thead><tr><th>Mercado</th><th>Avisos</th><th>Acierto</th><th title="Solo las que tuvieron cuota">Con cuota</th><th>Ganancia</th></tr></thead><tbody>${resumen}</tbody></table></div>
         <p class="nota">La que manda es "Con cuota": acierto de las alertas que sí tenían cuota, contra la probabilidad implícita de esas cuotas (verde si la supera). Con menos de 30 resueltas todavía no se puede concluir nada.</p>`
         : `<div class="tarjeta vacio"><strong>Aún no hay avisos de córners</strong>Llegan cuando un partido va 0 córners entre el ${esc(P.corners_1t_min_desde)}' y el ${esc(P.corners_1t_min_hasta)}', o cuando el favorito va perdiendo entre el ${esc(P.corners_2t_min_desde)}' y el ${esc(P.corners_2t_min_hasta)}'.</div>`}
+      ${r.por_tiempo ? `<div class="titulo-seccion"><h2>Base de córners por tiempo</h2></div>
+      <div class="tarjeta"><p class="nota" style="margin:0">Cada partido terminado de las ligas habilitadas guarda sus córners del 1T, del 2T y del total (Flashscore, gratis).</p>
+        <div class="tabla-wrap"><table><thead><tr><th>Partidos</th><th>Prom. 1T</th><th>Prom. 2T</th><th>Prom. total</th></tr></thead>
+        <tbody><tr><td>${esc(r.por_tiempo.partidos)}</td><td>${esc(r.por_tiempo.prom_1t ?? "–")}</td><td>${esc(r.por_tiempo.prom_2t ?? "–")}</td><td>${esc(r.por_tiempo.prom_total ?? "–")}</td></tr></tbody></table></div>
+        <p class="nota" style="margin:0">${r.por_tiempo.sin_datos ? `${esc(r.por_tiempo.sin_datos)} sin estadísticas en Flashscore. ` : ""}${r.por_tiempo.pendientes ? `${esc(r.por_tiempo.pendientes)} por leer.` : ""}</p></div>` : ""}
       <details class="desplegable">
         <summary>Últimos avisos <span class="tenue">(${(r.alertas || []).length})</span></summary>
         ${(r.alertas || []).slice(0, 40).map(fila).join("") || `<p class="nota">Sin avisos todavía.</p>`}
