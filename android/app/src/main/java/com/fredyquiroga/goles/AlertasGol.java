@@ -22,6 +22,9 @@ import com.google.androidbrowserhelper.trusted.DelegationService;
  * puede escoger canal; nosotros sí, porque aquí la notificación ya está en manos de la app. Entonces:
  *   - Alertas (traen los botones Entré / No entro), avisos de "¡Gooool!" y la prueba de Ajustes
  *     → canal "Alertas de gol" con el sonido res/raw/gol.ogg y vibración larga propia.
+ *   - Avisos de córners del laboratorio (el texto empieza por "Córners 1T/2T")
+ *     → canal "Alertas de córners", con el tono de notificación del teléfono para que Fredy le escoja
+ *       otro (p. ej. un pito) en Ajustes → ADN Soccer → Categorías de notificación (Fredy, 19 nov).
  *   - Todo lo demás (resultados, avisos técnicos, confirmaciones silenciosas) → igual que antes (canal de Chrome).
  *
  * Poka-yoke: Android no deja cambiar el sonido de un canal ya creado. Si cambias gol.ogg, sube el número de
@@ -29,31 +32,43 @@ import com.google.androidbrowserhelper.trusted.DelegationService;
  */
 public class AlertasGol extends DelegationService {
     static final String CANAL = "alertas_gol_v1";
+    static final String CANAL_CORNERS = "alertas_corners_v1";
     // espera, vibra, pausa, vibra, pausa, vibración larga: se reconoce en el bolsillo y en el reloj
     static final long[] VIBRACION = {0, 250, 120, 250, 120, 700};
 
     @Override
     public boolean onNotifyNotificationWithChannel(String platformTag, int platformId,
                                                    Notification notification, String channelName) {
-        if (Build.VERSION.SDK_INT < 26 || !esDeGol(notification)) {
+        String canal = Build.VERSION.SDK_INT < 26 ? null
+                : esDeCorners(notification) ? CANAL_CORNERS
+                : esDeGol(notification) ? CANAL : null;
+        if (canal == null) {
             return super.onNotifyNotificationWithChannel(platformTag, platformId, notification, channelName);
         }
         try {
             NotificationManager nm = getSystemService(NotificationManager.class);
             if (nm == null || !nm.areNotificationsEnabled()) return false;
             crearCanal(this);
-            NotificationChannel c = nm.getNotificationChannel(CANAL);
+            NotificationChannel c = nm.getNotificationChannel(canal);
             if (c != null && c.getImportance() == NotificationManager.IMPORTANCE_NONE) return false; // canal apagado por el usuario
             // Misma técnica que usa la librería de Google: reconstruir la notificación y moverla de canal.
             // Se conservan título, texto, ícono, botones, acción al tocar y el tag (para reemplazar recordatorios).
-            Notification n = Notification.Builder.recoverBuilder(this, notification).setChannelId(CANAL).build();
+            Notification n = Notification.Builder.recoverBuilder(this, notification).setChannelId(canal).build();
             nm.notify(platformTag, platformId, n);
             return true;
         } catch (Throwable t) {
             // Poka-yoke: si algo falla con el canal propio, la alerta igual llega por el canal normal
-            Diagnostico.guardar(this, "canal Alertas de gol", t);
+            Diagnostico.guardar(this, "canal " + canal, t);
             return super.onNotifyNotificationWithChannel(platformTag, platformId, notification, channelName);
         }
+    }
+
+    /** ¿Es un aviso de entrada de córners? El servidor (_shared/corners.ts) arranca el texto con "Córners 1T:" o
+     *  "Córners 2T:"; los resultados empiezan por ✅/❌ y siguen en el canal normal. */
+    static boolean esDeCorners(Notification n) {
+        if (n.actions != null && n.actions.length > 0) return false;
+        CharSequence t = n.extras != null ? n.extras.getCharSequence(Notification.EXTRA_TEXT) : null;
+        return t != null && t.toString().toLowerCase().startsWith("córners ");
     }
 
     /** ¿Es una alerta de trading o un gol? Se decide con lo que ya trae la notificación, sin tocar el servidor. */
@@ -83,5 +98,17 @@ public class AlertasGol extends DelegationService {
         c.setLightColor(0xFF22C55E);
         c.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
         nm.createNotificationChannel(c);
+
+        // Córners: sonido = tono de notificación del teléfono, para cambiarlo desde Ajustes sin tocar el de gol.
+        NotificationChannel k = new NotificationChannel(CANAL_CORNERS, "Alertas de córners", NotificationManager.IMPORTANCE_HIGH);
+        k.setDescription("Avisos de córners del laboratorio. Escoge aquí su sonido (p. ej. un pito)");
+        k.setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI, new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build());
+        k.enableVibration(true);
+        k.setVibrationPattern(new long[]{0, 400, 150, 400}); // dos vibraciones parejas: distinta a la de gol
+        k.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+        nm.createNotificationChannel(k);
     }
 }
