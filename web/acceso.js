@@ -696,7 +696,7 @@ Object.assign(pantallas, {
         <div class="mini-ley"><span><i class="la"></i>salió</span><span><i class="lf"></i>no salió</span><span><i class="lp"></i>en juego</span><span><i class="lu"></i>${porMinuto ? "umbral según el minuto" : "umbral de hoy"}</span></div>
         <p class="nota">${porMinuto
           ? "Cada línea es un partido: la mejor cuota entre las casas, por minuto del partido. El umbral sube por escalones (30', 45', 60', 75') porque a esa altura solo cuentan los partidos que seguían con un gol. Solo hay aviso si la curva queda por encima del escalón en dos fotos seguidas."
-          : "Cada línea es un partido: la mejor cuota entre las casas, minuto a minuto desde el gol. Esta estrategia no manda aviso al celular, solo registra."}</p>
+          : `Cada línea es un partido: la mejor cuota entre las casas, minuto a minuto desde el gol. Se vigila 15 min después del gol.${avisan.includes(e) ? "" : " Esta estrategia no manda aviso al celular, solo registra."}`}</p>
       </div>`;
     };
 
@@ -719,7 +719,7 @@ Object.assign(pantallas, {
     const avisoCaso = (o) => {
       if (o.alertada) {
         if (Number(o.push_enviados) > 0) return `<p class="nota">📲 Aviso enviado al celular.</p>`;
-        const porque = !avisan.includes(o.estrategia) ? "esta estrategia solo se registra, no avisa (solo avisa Más de 1,5)"
+        const porque = !avisan.includes(o.estrategia) ? "esta estrategia solo se registraba, sin aviso al celular"
           : P.lab_push === false ? "los avisos del laboratorio están apagados" : `la base tenía menos de ${esc(P.lab_n_min ?? 30)} casos`;
         return `<p class="nota">🔕 Sin aviso al celular: ${porque}.</p>`;
       }
@@ -763,7 +763,7 @@ Object.assign(pantallas, {
       <div class="titulo-seccion"><h2>Parámetros</h2></div>
       <div class="tarjeta">
         ${sw("lab_activo", "<b>Laboratorio de goles</b>", "Detecta, vigila la cuota y resuelve (gratis, con Flashscore)")}
-        ${sw("lab_push", "Avisos al celular", "Cuando una casa paga el umbral o más (por ahora: gol temprano, Más de 1,5)")}
+        ${sw("lab_push", "Avisos al celular", `Cuando una casa paga el umbral o más (avisan: ${avisan.map((e) => NOM[e] || e).join(", ") || "ninguna"})`)}
         ${sw("fs_vivo_activo", "Cuotas en vivo", "Apagado: no se fotografía ninguna cuota (la alerta usa API-Football)")}
         ${campo("lab_gt_minuto", "Gol temprano hasta el minuto", "El primer gol debe caer hasta aquí")}
         ${campo("lab_gt_ventana_min", "Vigilar la cuota (min)", "Minutos después del gol; 90 = hasta el 2.º gol o el final")}
