@@ -715,7 +715,7 @@ const pantallas = {
       <div class="tarjeta">
         ${swC("corners_activo", "Laboratorio activo", "Detecta, guarda y resuelve el acierto con Flashscore (gratis)")}
         ${swC("corners_push", "Avisos al celular", "Apagado: sigue juntando datos en silencio")}
-        ${swC("corners_cuota", "Leer la cuota", "1 consulta de API por aviso. Apagado: 0 consultas")}
+        ${swC("corners_api_fotos", "Fotos de cuotas (API)", "1 consulta trae las cuotas de córners de todos los partidos en vivo. Sin cuota no llega push")}
         ${numC("corners_1t_min_desde", "1T: minuto en que se revisa", "Si en ese minuto el partido va 0 córners, te avisa (cada partido se revisa una sola vez)")}
         ${numC("corners_1t_min_hasta", "1T: hasta el minuto", "Margen por si un ciclo se retrasa")}
         ${numC("corners_1t_uno_desde", "1T con 1 córner: desde el minuto", "Si va exactamente 1 córner, todavía se puede entrar a más de 1,5 en el 1T")}
@@ -723,7 +723,7 @@ const pantallas = {
         ${numC("corners_2t_min_desde", "2T: desde el minuto", "Desde cuándo se revisa si el favorito va perdiendo")}
         ${numC("corners_2t_min_hasta", "2T: hasta el minuto", "")}
         ${numC("corners_objetivo", "Córners más que se buscan", "La línea es córners actuales + este número − 0,5")}
-        ${numC("corners_api_max_dia", "Consultas de API por día", "Solo cuenta si \"Leer la cuota\" está encendido")}
+        ${numC("corners_api_fotos_max_dia", "Consultas de API por día (fotos)", "Tope de las fotos de cuotas; siempre dentro del presupuesto general")}
         <div class="botones"><button class="btn" id="btn-guardar-corners">Guardar córners</button></div>
         <p class="nota">Los interruptores y el tope de consultas no cambian la versión. <a href="#corners">Ver avisos y acierto de córners ›</a></p>
       </div>
