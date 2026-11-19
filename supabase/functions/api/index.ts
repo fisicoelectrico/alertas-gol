@@ -56,7 +56,7 @@ const json = (d: unknown, status = 200) =>
 
 // Parámetros que se pueden cambiar desde la PWA (lista blanca)
 // Parámetros que definen la versión de córners: cambiar uno sube corners_version (c1 → c2…)
-const CORNERS_REGLA = ["corners_1t_min_desde", "corners_1t_min_hasta", "corners_2t_min_desde", "corners_2t_min_hasta", "corners_objetivo"];
+const CORNERS_REGLA = ["corners_1t_min_desde", "corners_1t_min_hasta", "corners_1t_uno_desde", "corners_1t_uno_hasta", "corners_2t_min_desde", "corners_2t_min_hasta", "corners_objetivo"];
 const EDITABLES = new Set([
   "minuto_min", "minuto_max", "cuota_fav_max", "diferencia_min", "dominancia_min", "cuota_objetivo",
   "momentum_ventana_min", "momentum_gap_min", "pesos_ip",

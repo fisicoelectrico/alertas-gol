@@ -587,8 +587,8 @@ Object.assign(pantallas, {
     if (!r) return `<div class="tarjeta vacio"><strong>Necesitas ser administrador</strong>Abre tu enlace de administrador o escribe el PIN.</div>`;
     const P = r.params || {};
     const NOM = { gt_o15: "Gol temprano · Más de 1,5", gt_o25: "Gol temprano · Más de 2,5",
-      c1t_cero20: "Córners 1T · 0 córners al 20'", c2t_fav77: "Córners 2T · favorito perdiendo al 77'" };
-    const ORDEN = ["gt_o15", "gt_o25", "c1t_cero20", "c2t_fav77"];
+      c1t_cero20: "Córners 1T · 0 córners al 20'", c1t_uno: "Córners 1T · 1 córner al 28'", c2t_fav77: "Córners 2T · favorito perdiendo al 77'" };
+    const ORDEN = ["gt_o15", "gt_o25", "c1t_cero20", "c1t_uno", "c2t_fav77"];
     const RES = { acierto: "✅ Salió", fallo: "❌ No salió", pendiente: "⏳ En juego", anulada: "Anulada" };
     const c2 = (v) => n(v).replace(".", ",");
     const pct = (v) => (v == null ? "–" : `${Math.round(Number(v) * 100)}%`);
@@ -736,7 +736,7 @@ Object.assign(pantallas, {
     const r = await conPin((pin) => post("/admin/corners", { pin }));
     if (!r) return `<div class="tarjeta vacio"><strong>Necesitas ser administrador</strong>Abre tu enlace de administrador o escribe el PIN.</div>`;
     const P = r.params || {};
-    const NOMBRE = { c1t_cero20: "1T · 0 córners al 20'", c2t_fav77: "2T · favorito perdiendo al 77'" };
+    const NOMBRE = { c1t_cero20: "1T · 0 córners al 20'", c1t_uno: "1T · 1 córner al 28'", c2t_fav77: "2T · favorito perdiendo al 77'" };
     const RES = { acierto: "✅ Salió", fallo: "❌ No salió", pendiente: "⏳ En juego", anulada: "Anulada" };
     const SIN = { sin_pareja_api: "sin pareja en API", tope_diario: "tope diario de consultas", sin_presupuesto_api: "sin cupo de API",
       sin_mercado: "la API no ofrecía córners", sin_mercado_de_ese_tiempo: "solo córners de otro tiempo", sin_esa_linea: "no estaba esa línea", error_api: "error de la API", cuota_apagada: "lectura de cuota apagada" };
@@ -788,6 +788,8 @@ Object.assign(pantallas, {
       <div class="tarjeta">
         ${campo("corners_1t_min_desde", "1T desde el minuto", "Desde cuándo se revisa si va 0 córners")}
         ${campo("corners_1t_min_hasta", "1T hasta el minuto", "Ventana amplia para que ningún ciclo se la salte")}
+        ${campo("corners_1t_uno_desde", "1T con 1 córner desde el minuto", "Va exactamente 1 córner: falta uno para más de 1,5")}
+        ${campo("corners_1t_uno_hasta", "1T con 1 córner hasta el minuto", "")}
         ${campo("corners_2t_min_desde", "2T desde el minuto", "Desde cuándo se revisa si el favorito pierde")}
         ${campo("corners_2t_min_hasta", "2T hasta el minuto", "")}
         ${campo("corners_objetivo", "Córners más que se buscan", "La línea es córners actuales + este número − 0,5")}
@@ -798,7 +800,7 @@ Object.assign(pantallas, {
       <div class="titulo-seccion"><h2>¿Está funcionando?</h2></div>
       ${resumen ? `<div class="tarjeta tabla-wrap"><table><thead><tr><th>Mercado</th><th>Avisos</th><th>Acierto</th><th title="Solo las que tuvieron cuota">Con cuota</th><th>Ganancia</th></tr></thead><tbody>${resumen}</tbody></table></div>
         <p class="nota">La que manda es "Con cuota": acierto de las alertas que sí tenían cuota, contra la probabilidad implícita de esas cuotas (verde si la supera). Con menos de 30 resueltas todavía no se puede concluir nada.</p>`
-        : `<div class="tarjeta vacio"><strong>Aún no hay avisos de córners</strong>Llegan cuando un partido va 0 córners entre el ${esc(P.corners_1t_min_desde)}' y el ${esc(P.corners_1t_min_hasta)}', o cuando el favorito va perdiendo entre el ${esc(P.corners_2t_min_desde)}' y el ${esc(P.corners_2t_min_hasta)}'.</div>`}
+        : `<div class="tarjeta vacio"><strong>Aún no hay avisos de córners</strong>Llegan cuando un partido va 0 córners entre el ${esc(P.corners_1t_min_desde)}' y el ${esc(P.corners_1t_min_hasta)}', 1 córner entre el ${esc(P.corners_1t_uno_desde)}' y el ${esc(P.corners_1t_uno_hasta)}', o cuando el favorito va perdiendo entre el ${esc(P.corners_2t_min_desde)}' y el ${esc(P.corners_2t_min_hasta)}'.</div>`}
       ${r.por_tiempo ? `<div class="titulo-seccion"><h2>Base de córners por tiempo</h2></div>
       <div class="tarjeta"><p class="nota" style="margin:0">Cada partido terminado de las ligas habilitadas guarda sus córners del 1T, del 2T y del total (Flashscore, gratis).</p>
         <div class="tabla-wrap"><table><thead><tr><th>Partidos</th><th>Prom. 1T</th><th>Prom. 2T</th><th>Prom. total</th></tr></thead>

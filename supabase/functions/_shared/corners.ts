@@ -12,6 +12,10 @@
 //   c1t_cero20  Partido con 0 córners entre el 20' y el 26' del 1T  → "más de 1,5 córners en el 1T".
 //   c2t_fav77   Favorito perdiendo (por lo que sea, sin goles_fav_max ni presión) entre el 77' y el 80'
 //               → "córners actuales + 1,5" del partido (en la práctica, 2 córners más en lo que queda del 2T).
+//   c1t_uno     (19 nov, Fredy) Partido con EXACTAMENTE 1 córner entre el 28' y el 37' del 1T → "más de 1,5 córners
+//               en el 1T": falta uno solo. Cuotas vistas por Fredy en esa franja: 1,40-1,70. Un partido tiene un
+//               solo aviso del 1T: si ya avisó c1t_cero20, no avisa c1t_uno. Mientras vaya 0 córners se sigue
+//               mirando en cada ciclo (puede llegar al primero dentro de la ventana); con 2 o más se descarta.
 //
 // Cuánto cuesta:
 //   · Detectar y resolver: GRATIS. Lista en vivo y estadísticas de Flashscore (bloques Partido, 1T y 2T).
@@ -28,7 +32,8 @@ import * as A from "./algoritmo.ts";
 import { ApiFootball } from "./apifootball.ts";
 import { notificar, cuotaTxt, ligaFS } from "./notificar.ts";
 
-type Mercado = "c1t_cero20" | "c2t_fav77";
+type Mercado = "c1t_cero20" | "c1t_uno" | "c2t_fav77";
+const es1T = (m: string) => m.startsWith("c1t");
 
 const num = (x: unknown) => { const n = parseFloat(String(x ?? "")); return Number.isFinite(n) ? n : null; };
 const coma = (x: number) => String(x).replace(".", ",");
@@ -39,6 +44,8 @@ export function parametrosCorners(cfg: Config) {
     version: String(cfg.corners_version ?? "c1"),
     t1_desde: Number(cfg.corners_1t_min_desde ?? 20),
     t1_hasta: Number(cfg.corners_1t_min_hasta ?? 26),
+    t1u_desde: Number(cfg.corners_1t_uno_desde ?? 28),
+    t1u_hasta: Number(cfg.corners_1t_uno_hasta ?? 37),
     t2_desde: Number(cfg.corners_2t_min_desde ?? 77),
     t2_hasta: Number(cfg.corners_2t_min_hasta ?? 80),
     objetivo: Number(cfg.corners_objetivo ?? 2),
@@ -130,6 +137,7 @@ export async function cicloCorners(args: {
     const fx = fixtureDe(p);
     if (fx && infoP.get(fx)?.habilitada === false) continue;
     if (em.estado === "1H" && em.minuto >= P.t1_desde && em.minuto <= P.t1_hasta) pendientes.push({ p, mercado: "c1t_cero20", minuto: em.minuto });
+    if (em.estado === "1H" && em.minuto >= P.t1u_desde && em.minuto <= P.t1u_hasta) pendientes.push({ p, mercado: "c1t_uno", minuto: em.minuto });
     // 2T: solo si alguien gana (el favorito tiene que ir perdiendo); el favorito se confirma abajo
     if (em.estado === "2H" && em.minuto >= P.t2_desde && em.minuto <= P.t2_hasta && p.gl !== p.gv) pendientes.push({ p, mercado: "c2t_fav77", minuto: em.minuto });
   }
@@ -138,6 +146,10 @@ export async function cicloCorners(args: {
   // Cada partido se revisa UNA vez por mercado (queda en corners_chequeos, avise o no)
   const hechos = new Set((await sql`select fs_id || '|' || mercado as k from futbol.corners_chequeos
                                     where fs_id = any(${pendientes.map((x) => x.p.id)}::text[])`).map((r: any) => r.k));
+  // Un solo aviso del 1T por partido: el que ya avisó por 0 córners no avisa por 1 córner
+  for (const r of await sql`select fs_id from futbol.alertas_corners where mercado = 'c1t_cero20'
+                            and fs_id = any(${pendientes.map((x) => x.p.id)}::text[])`) hechos.add(`${r.fs_id}|c1t_uno`);
+  const avisados1T = new Set<string>();
   const tope = Number(cfg.corners_stats_por_ciclo ?? 25);
   let leidos = 0;
   const [{ usadas }] = await sql`select count(*)::int as usadas from futbol.alertas_corners
@@ -146,6 +158,7 @@ export async function cicloCorners(args: {
 
   for (const { p, mercado, minuto } of pendientes) {
     if (hechos.has(`${p.id}|${mercado}`)) continue;
+    if (mercado === "c1t_uno" && avisados1T.has(p.id)) continue;   // avisó c1t_cero20 en este mismo ciclo
     const fx = fixtureDe(p);
 
     // ---- Favorito (solo 2T): el de la base, o la cuota de apertura de Flashscore (gratis) ----
@@ -174,13 +187,18 @@ export async function cicloCorners(args: {
     let ck: FS.CornersFS;
     try { ck = await FS.corners(p.id); } catch (e) { log(`córners: stats ${p.id}: ${(e as Error).message}`); continue; }
     // En el 1T el bloque "1st Half" y el del partido son lo mismo; si falta uno se usa el otro
-    const actual = mercado === "c1t_cero20" ? (ck.t1 ?? ck.partido) : ck.partido;
+    const actual = es1T(mercado) ? (ck.t1 ?? ck.partido) : ck.partido;
     if (!actual) { await chequeo(p, mercado, minuto, null, false, ck.filas ? "sin_fila_corners" : "sin_stats"); continue; }
     const total = actual[0] + actual[1];
     if (mercado === "c1t_cero20" && total > 0) { await chequeo(p, mercado, minuto, actual, false, "con_corners"); continue; }
+    // c1t_uno: con 0 córners no se cierra el chequeo (puede llegar el primero dentro de la ventana)
+    if (mercado === "c1t_uno" && total === 0) continue;
+    if (mercado === "c1t_uno" && total > 1) { await chequeo(p, mercado, minuto, actual, false, "dos_o_mas"); continue; }
 
     // ---- Aviso ----
-    const linea = total + P.objetivo - 0.5;   // 0 córners → 1,5; 7 córners → 8,5
+    // c1t_uno busca UN córner más (1 → más de 1,5); los otros, corners_objetivo más
+    const objetivo = mercado === "c1t_uno" ? 1 : P.objetivo;
+    const linea = total + objetivo - 0.5;   // 0 córners → 1,5; 1 córner (c1t_uno) → 1,5; 7 córners → 8,5
     let cuota: number | null = null, mercadoNombre: string | null = null, hayMercado: boolean | null = null;
     let vistos: any = null, consultada = false, motivoSinCuota: string | null = null;
     if (cfg.corners_cuota === false) motivoSinCuota = "cuota_apagada";
@@ -191,7 +209,7 @@ export async function cicloCorners(args: {
       try {
         cupoApi--; consultada = true;
         const r = await api.get("/odds/live", { fixture: fx });
-        const c = parsearCuotaCorners(r, mercado === "c1t_cero20" ? "1T" : "partido", linea);
+        const c = parsearCuotaCorners(r, es1T(mercado) ? "1T" : "partido", linea);
         cuota = c.cuota; mercadoNombre = c.mercado; hayMercado = c.hayMercado; vistos = c.vistos;
         if (!c.hayMercado) motivoSinCuota = Object.keys(c.vistos).length ? "sin_mercado_de_ese_tiempo" : "sin_mercado";
         else if (c.cuota === null) motivoSinCuota = "sin_esa_linea";
@@ -204,19 +222,22 @@ export async function cicloCorners(args: {
         minuto, goles_local, goles_visitante, corners_local, corners_visitante, linea, objetivo,
         api_consultada, hay_mercado, cuota, mercado_nombre, motivo_sin_cuota, mercados_vistos, stats)
       values (${mercado}, ${P.version}, ${sql.json(P as any)}, ${p.id}, ${fx}, ${p.liga}, ${p.local}, ${p.visitante}, ${favorito},
-        ${minuto}, ${p.gl}, ${p.gv}, ${actual[0]}, ${actual[1]}, ${linea}, ${P.objetivo},
+        ${minuto}, ${p.gl}, ${p.gv}, ${actual[0]}, ${actual[1]}, ${linea}, ${objetivo},
         ${consultada}, ${hayMercado}, ${cuota}, ${mercadoNombre}, ${motivoSinCuota}, ${vistos ? sql.json(vistos) : null}, ${sql.json(ck.extra as any)})
       on conflict (fs_id, mercado) do nothing
       returning id`;
     await chequeo(p, mercado, minuto, actual, true, null);
+    if (es1T(mercado)) avisados1T.add(p.id);
     if (!al) continue;
 
     // Sin la línea exacta, las alternativas del mismo tiempo (visto en el 1T: "más de 2" y "exactamente 2").
     // La fuente de la cuota no se muestra (Fredy, 15 nov).
-    const alt = cuota ? null : alternativas(vistos, mercado === "c1t_cero20" ? "1T" : "partido", total + P.objetivo);
+    const alt = cuota ? null : alternativas(vistos, es1T(mercado) ? "1T" : "partido", total + objetivo);
     const precio = cuota ? `, paga ${cuotaTxt(cuota)}` : alt ? `. Sin esa línea: ${alt}` : "";
     const cuerpo = mercado === "c1t_cero20"
       ? `Córners 1T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. Sin córners todavía. Entrada: más de ${coma(linea)} córners en el 1T${precio}.`
+      : mercado === "c1t_uno"
+      ? `Córners 1T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. Va 1 córner. Todavía se puede entrar: más de ${coma(linea)} córners en el 1T (falta 1)${precio}.`
       : `Córners 2T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. ${fav} es favorito y va perdiendo. Van ${total} córners. Entrada: más de ${coma(linea)}${precio}.`;
     const n = cfg.corners_push === false ? 0 : await notificar({
       titulo: ligaFS(p.liga).txt,
@@ -262,7 +283,7 @@ async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void
     const em = FS.estadoYMinuto(p);
     const meta = Number(a.ck0) + Number(a.objetivo);
     let ahora: number | null, cerrado: boolean;
-    if (a.mercado === "c1t_cero20") {
+    if (es1T(a.mercado)) {
       const enPrimerTiempo = em.estado === "1H";
       const bloque = ck.t1 ?? (enPrimerTiempo || em.estado === "HT" ? ck.partido : null);
       ahora = bloque ? bloque[0] + bloque[1] : null;
@@ -282,7 +303,7 @@ async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void
                           minuto_cierre = ${em.minuto}, cerrada_ts = now()
                         where id = ${a.id} and resultado = 'pendiente' returning id`;
     if (!r.length) continue;
-    const tiempo = a.mercado === "c1t_cero20" ? " en el 1T" : "";
+    const tiempo = es1T(a.mercado) ? " en el 1T" : "";
     if (conPush) await notificar({
       titulo: ligaFS(a.liga).txt,
       cuerpo: `${gano ? "✅ Salió" : "❌ No salió"}, córners${tiempo}: ${a.local} ${p.gl}–${p.gv} ${a.visitante}: ${ahora} córners${tiempo} (necesitaba ${meta})${gano && em.minuto ? `, al ${em.minuto}'` : ""}.${a.cuota ? ` Cuota ${cuotaTxt(a.cuota)}.` : ""}`,
