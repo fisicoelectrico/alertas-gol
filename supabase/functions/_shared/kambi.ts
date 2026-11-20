@@ -51,6 +51,8 @@ export interface Kambi {
   /** Al menos una casa respondió la lista en vivo de este ciclo. */
   ok: boolean;
   pareja: Map<string, EventoKambi[]>;
+  /** DECISIONES 66: fsId → "Local - Visitante" de Kambi cuando solo un equipo encaja (pareja dudosa, a revisar). */
+  dudosos: Map<string, string>;
   resumen: Record<string, unknown>;
   oferta(fsId: string, tipo: TipoCuota, linea: number, opts?: { goles?: number }): Promise<OfertaCasa>;
 }
@@ -187,6 +189,7 @@ export async function cicloKambi(args: {
   const maxEv = Math.max(0, Number(cfg.kambi_max_eventos ?? 40));
   const vig = Math.max(1, Number(cfg.kambi_vigencia_min ?? 5));
   const pareja = new Map<string, EventoKambi[]>();
+  const dudosos = new Map<string, string>();
   const resumen: Record<string, unknown> = {};
   let ok = false;
 
@@ -208,7 +211,12 @@ export async function cicloKambi(args: {
       catch (e) { log(`kambi: lista ${casa}: ${(e as Error).message}`); resumen[casa] = { error: (e as Error).message }; return; }
       ok = true;
       const porId = new Map(lista.map((e) => [e.id, e]));
-      const pares = FS.emparejar(enVivo, lista.map((e) => ({ fixture_id: e.id, local: e.local, visitante: e.visitante, kickoff: e.inicio })));
+      const comoApi = lista.map((e) => ({ fixture_id: e.id, local: e.local, visitante: e.visitante, kickoff: e.inicio }));
+      const pares = FS.emparejar(enVivo, comoApi);
+      for (const [fsId, evId] of FS.dudosos(enVivo, comoApi, pares)) {
+        const e = porId.get(evId);
+        if (e && !dudosos.has(fsId)) dudosos.set(fsId, `${e.local} - ${e.visitante}`);
+      }
       for (const [fsId, { fixture_id }] of pares) {
         const e = porId.get(fixture_id);
         if (e) pareja.set(fsId, [...(pareja.get(fsId) ?? []), e]);
@@ -322,7 +330,8 @@ export async function cicloKambi(args: {
     return { estado: "sin_linea", casas: [], cercana: l !== undefined ? { linea: l, casas: otras.get(l)!.sort(orden) } : null };
   }
 
-  return { activo, ok, pareja, resumen, oferta };
+  for (const fsId of pareja.keys()) dudosos.delete(fsId);   // si una casa sí lo emparejó, no es dudoso
+  return { activo, ok, pareja, dudosos, resumen, oferta };
 }
 
 /** {"BetPlay": 1.85, "Rushbet": 1.83} para guardar en la base. */

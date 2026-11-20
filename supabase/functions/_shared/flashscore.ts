@@ -227,8 +227,11 @@ export async function cuotas(id: string, idLocal: string | null, idVisitante: st
 // Palabras de relleno que no distinguen equipos (fc, club, deportivo…) se quitan antes de comparar.
 const RELLENO = new Set(["fc", "cf", "sc", "cd", "ac", "as", "ca", "club", "de", "del", "la", "el", "the", "afc", "fk",
   "sk", "nk", "if", "bk", "cs", "us", "sd", "ud", "rc", "ss", "sv", "deportivo", "atletico", "atl", "real", "city", "united", "utd"]);
+// Letras que NFD no descompone: "Chrobry Głogów" (Kambi) quedaba "g ogow" y no se emparejaba con
+// "Chrobry Glogow" (Flashscore), así que BetPlay/Rushbet nunca se leían para ese partido (20 nov).
+const LETRAS: Record<string, string> = { "ł": "l", "Ł": "l", "ø": "o", "Ø": "o", "đ": "d", "Đ": "d", "ß": "ss", "æ": "ae", "Æ": "ae", "ı": "i", "œ": "oe", "þ": "th", "ð": "d" };
 export function fichas(nombre: string): string[] {
-  return nombre.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+  return nombre.replace(/[łŁøØđĐßæÆıœþð]/g, (c) => LETRAS[c] ?? c).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
     .replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w && !RELLENO.has(w));
 }
 // Marcas de categoría ("W", "U17", "B", "II"…). Cuentan para el puntaje, pero por sí solas no prueban
@@ -299,6 +302,23 @@ export function emparejar(fs: PartidoFS[], api: FixtureApi[]): Map<string, { fix
     if (out.has(c.fs) || usados.has(c.api)) continue;
     out.set(c.fs, { fixture_id: c.api, puntaje: Number(c.p.toFixed(2)) });
     usados.add(c.api);
+  }
+  return out;
+}
+
+/**
+ * Parejas DUDOSAS (DECISIONES 66, Fredy 20 nov): partidos de Flashscore que `emparejar` no unió, pero que a la
+ * misma hora (±20 min) tienen un evento con AL MENOS UNO de los dos equipos parecido (palabra real en común).
+ * No se usan para cuotas ni alertas: solo para no esconder el partido de "Favoritos perdiendo" y que Fredy lo revise.
+ */
+export function dudosos(fs: PartidoFS[], api: FixtureApi[], pares: Map<string, unknown>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const f of fs) {
+    if (pares.has(f.id)) continue;
+    const a = api.find((x) => Math.abs(x.kickoff - f.inicio) <= 20 * 60000 &&
+      categoria(f.local) === categoria(x.local) && categoria(f.visitante) === categoria(x.visitante) &&
+      (comunes(f.local, x.local).reales > 0 || comunes(f.visitante, x.visitante).reales > 0));
+    if (a) out.set(f.id, a.fixture_id);
   }
   return out;
 }

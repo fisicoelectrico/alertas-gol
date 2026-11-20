@@ -196,7 +196,7 @@ async function widget() {
     select fixture_id from futbol.partidos where seguimiento
     union select fixture_id from futbol.alertas where resultado = 'pendiente'`).map((r: any) => String(r.fixture_id)));
   const partidos = (u.radar ?? []).map((p: any) => ({
-    id: p.id, e: p.e, m: p.m, l: p.l, v: p.v, gl: p.gl, gv: p.gv, fav: p.fav, liga: p.liga, pais: p.pais ?? null, c: segs.has(String(p.id)), ...(p.kb !== undefined ? { kb: p.kb } : {}),
+    id: p.id, e: p.e, m: p.m, l: p.l, v: p.v, gl: p.gl, gv: p.gv, fav: p.fav, liga: p.liga, pais: p.pais ?? null, c: segs.has(String(p.id)), ...(p.kb !== undefined ? { kb: p.kb } : {}), ...(p.kbn ? { kbn: p.kbn } : {}),
   })).sort((a: any, b: any) => Number(b.c) - Number(a.c) || (b.m ?? -1) - (a.m ?? -1));
   // vivos se cuenta sobre la lista ya filtrada (el conteo guardado incluye todas las ligas)
   const vivos = partidos.filter((p: any) => ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(p.e)).length;

@@ -310,7 +310,7 @@ function listaEnVivo(w, abiertas) {
       <span class="vequipos"><span>${esc(p.l)}${p.fav === "home" ? " <i class=\"vfav\">★</i>" : ""}</span><span>${esc(p.v)}${p.fav === "away" ? " <i class=\"vfav\">★</i>" : ""}</span>
         <small class="vliga">${esc([p.pais, ligaCortaTxt(p.liga)].filter(Boolean).join(" · "))}</small></span>
       <b class="vgoles num">${p.gl}<br>${p.gv}</b>
-      <span class="vpie">${p.c ? `<span class="vcumple">Candidato</span>` : ""}${cuota(p)}${p.kb === false ? `<span class="vsin">Sin BetPlay/Rushbet</span>` : ""}</span>
+      <span class="vpie">${p.c ? `<span class="vcumple">Candidato</span>` : ""}${cuota(p)}${p.kb === false ? `<span class="vsin">Sin BetPlay/Rushbet</span>` : ""}${p.kb === "revisar" ? `<span class="vrevisar" title="Solo un equipo coincide con BetPlay/Rushbet">Revisar: en BetPlay sería ${esc(p.kbn || "otro nombre")}</span>` : ""}</span>
       <span class="vflecha" aria-hidden="true">›</span>
     </button>`;
   return `<div class="titulo-seccion"><h2>En vivo</h2><small>${w.ts ? hace(w.ts) : ""}</small></div>

@@ -450,7 +450,9 @@ Deno.serve(async (req) => {
           cf: Number.isFinite(cuotaFav) ? cuotaFav : null, mo: motivo,
           ...(evaluaciones.has(id) ? { ev: evaluaciones.get(id) } : {}),
           // kb: ¿BetPlay/Rushbet tienen el partido en su lista en vivo? (DECISIONES 64). Solo si se leyó la lista.
-          ...(kambi?.ok && f.__fs?.id ? { kb: kambi.pareja.has(f.__fs.id) } : {}),
+          // DECISIONES 66: "revisar" si solo uno de los dos equipos encaja con un evento de Kambi (kbn = cómo lo llama)
+          ...(kambi?.ok && f.__fs?.id ? (kambi.pareja.has(f.__fs.id) ? { kb: true }
+            : kambi.dudosos.has(f.__fs.id) ? { kb: "revisar", kbn: kambi.dudosos.get(f.__fs.id) } : { kb: false }) : {}),
         };
       });
     } catch (e) {
