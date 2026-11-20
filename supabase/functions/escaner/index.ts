@@ -1002,7 +1002,14 @@ Deno.serve(async (req) => {
       // 5a''. Cuotas de BetPlay y Rushbet (DECISIONES 54): lista en vivo de cada casa y cuotas de los partidos
       // que importan (candidatos, gol temprano vigilado y franjas de córners). Gratis; aislado si falla.
       try {
-        const prioridad = new Set<string>(enVivo.filter(esCandidato).map((f) => f.__fs?.id).filter(Boolean));
+        // Desde el gol que deja al favorito perdiendo (1T, descanso o 2T antes de la ventana: enHistorial), en la
+        // ventana (esCandidato) y con la alerta ya enviada y abierta (para los recordatorios), cada ciclo. Antes solo
+        // entraban los candidatos: el partido llegaba a la ventana sin ninguna lectura y, tras la alerta, salía de
+        // la cola y los recordatorios se quedaban sin cuota (Shakhtar - Livyi Bereg, 20 nov).
+        const abiertas = new Set<number>((await sql`select fixture_id from futbol.alertas
+            where resultado = 'pendiente' and ts > now() - interval '3 hours'`).map((r: any) => Number(r.fixture_id)));
+        const prioridad = new Set<string>(enVivo.filter((f) => esCandidato(f) || enHistorial(f) || abiertas.has(f.fixture.id))
+          .map((f) => f.__fs?.id).filter(Boolean));
         for (const r of await sql`select fs_id from futbol.lab_oportunidades where vigilando and fs_id is not null`) prioridad.add(r.fs_id);
         kambi = await cicloKambi({ cfg, vivosFS, fixtureDe: (fs) => conocidos.get(fs)?.fixture_id ?? null, prioridad, log });
         (detalle as any).kambi = kambi.resumen;
