@@ -2,13 +2,14 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/fila"
     android:layout_width="match_parent" android:layout_height="wrap_content"
     android:orientation="horizontal" android:gravity="center_vertical"
-    android:paddingTop="5dp" android:paddingBottom="5dp" android:paddingStart="4dp" android:paddingEnd="4dp">
+    android:paddingTop="6dp" android:paddingBottom="6dp" android:paddingStart="8dp" android:paddingEnd="8dp">
     <TextView android:id="@+id/minuto" android:layout_width="40dp" android:layout_height="wrap_content"
-        android:textColor="#3DDC84" android:textSize="12sp" />
-    <TextView android:id="@+id/local" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-        android:gravity="end" android:maxLines="1" android:ellipsize="end" android:textColor="#E8F0EA" android:textSize="13sp" />
-    <TextView android:id="@+id/marcador" android:layout_width="44dp" android:layout_height="wrap_content"
-        android:gravity="center" android:textColor="#E8F0EA" android:textSize="13sp" android:textStyle="bold" />
-    <TextView android:id="@+id/visitante" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-        android:maxLines="1" android:ellipsize="end" android:textColor="#E8F0EA" android:textSize="13sp" />
+        android:textColor="#9DB2A6" android:textSize="12sp" android:textStyle="bold" />
+    <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+        android:orientation="vertical">
+        <TextView android:id="@+id/partido" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:maxLines="1" android:ellipsize="end" android:textColor="#E8F0EA" android:textSize="13sp" android:textStyle="bold" />
+        <TextView android:id="@+id/liga" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:maxLines="1" android:ellipsize="end" android:textColor="#9DB2A6" android:textSize="11sp" />
+    </LinearLayout>
 </LinearLayout>
