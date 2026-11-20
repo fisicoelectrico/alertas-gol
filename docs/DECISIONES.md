@@ -283,3 +283,8 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 - `/widget` → `perdiendo` excluye `kb === false` (el APK no cambia). En Ahora, "Favoritos perdiendo" usa la misma condición; en "Todos en vivo" y en el buscador esos partidos siguen saliendo, con la etiqueta "Sin BetPlay/Rushbet".
 - **Riesgo conocido:** si el emparejamiento falla por nombre (como Livyi Bereg antes de DECISIONES 61), un partido que sí ofrecen quedaría oculto del filtro. Se ve en "Todos en vivo".
 - No cambia la regla. Cero consultas a API-Football.
+
+## 65. Cuota de BetPlay/Rushbet para todo favorito perdiendo, y "Más de X goles" en vez de "Over" (20 nov 2026, a pedido de Fredy)
+- **Caso:** Chrobry Glogow 0-1 Puszcza (Polonia, descanso) salía sin cuota en Ahora, aunque BetPlay lo tenía (Fredy lo vio) y estaba en la lista en vivo de las dos casas. Causa: a la cola de Kambi solo entraban candidatos, `enHistorial` (que exige cuota previa del favorito ≤ `cuota_fav_max` = 2; Chrobry salió a 2,27), alertas abiertas y gol temprano. El partido estaba emparejado pero nunca se pedía.
+- **Cambio:** la prioridad de Kambi incluye todo partido en vivo (1T, descanso, 2T) con favorito que va perdiendo, sin mirar `cuota_fav_max`. No es urgente (se lee cada `kambi_intervalo_min`). Así la cuota aparece desde el gol, apenas BetPlay/Rushbet abren el mercado. La regla de alerta no cambia.
+- **Texto:** "O1.5 1.08" pasa a "Más de 1.5 goles 1.08" en la lista, y la ficha dice "Más de X goles" (Fredy: mucha gente no entiende "Over").

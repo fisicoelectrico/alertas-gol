@@ -1043,7 +1043,15 @@ Deno.serve(async (req) => {
         // la cola y los recordatorios se quedaban sin cuota (Shakhtar - Livyi Bereg, 20 nov).
         const abiertas = new Set<number>((await sql`select fixture_id from futbol.alertas
             where resultado = 'pendiente' and ts > now() - interval '3 hours'`).map((r: any) => Number(r.fixture_id)));
-        const prioridad = new Set<string>(enVivo.filter((f) => esCandidato(f) || enHistorial(f) || abiertas.has(f.fixture.id))
+        // DECISIONES 65 (Fredy, 20 nov): también todo favorito perdiendo en vivo, aunque su cuota previa pase
+        // cuota_fav_max (Chrobry - Puszcza a 2,27 no se leía): Ahora y el widget muestran su cuota desde el gol.
+        const favPierdeVivo = (f: any) => {
+          const st = f.fixture.status.short, p = favs.get(f.fixture.id);
+          if (!(st === "1H" || st === "HT" || st === "2H") || !p?.favorito || info.get(f.fixture.id)?.habilitada === false) return false;
+          const gl = f.goals.home ?? 0, gv = f.goals.away ?? 0;
+          return p.favorito === "home" ? gv > gl : gl > gv;
+        };
+        const prioridad = new Set<string>(enVivo.filter((f) => esCandidato(f) || enHistorial(f) || favPierdeVivo(f) || abiertas.has(f.fixture.id))
           .map((f) => f.__fs?.id).filter(Boolean));
         // Urgentes (DECISIONES 62): la cuota de goles decide una push ya → el cron los pide cada 30 s
         const urgente = new Set<string>(enVivo.filter((f) => esCandidato(f) || abiertas.has(f.fixture.id))
