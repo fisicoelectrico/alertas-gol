@@ -69,6 +69,8 @@ const EDITABLES = new Set([
   "corners_api_fotos", "corners_api_fotos_max_dia",
   // Cuotas en vivo de Flashscore y laboratorio de goles (DECISIONES 40)
   "fs_vivo_activo", "fs_vivo_max_consultas", "fs_vivo_intervalo_min", "fs_vivo_intervalo_cand_min", "fs_fallos_aviso",
+  // Push del laboratorio y de córners también para los amigos + cuota mínima fija (DECISIONES 68)
+  "lab_push_amigos", "corners_push_amigos", "lab_umbral_fijo", "corners_cuota_min_fija",
   "lab_activo", "lab_push", "lab_gt_minuto", "lab_gt_ventana_min", "lab_intervalo_min", "lab_intervalo_largo_min", "lab_n_min",
 ]);
 // Claves que nunca salen por la API pública
@@ -102,6 +104,8 @@ function validarValor(clave: string, v: unknown): boolean {
   if (clave === "corners_activo" || clave === "corners_push" || clave === "corners_cuota" || clave === "corners_api_fotos") return typeof v === "boolean";
   if (clave === "corners_api_fotos_max_dia") return typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 94;
   if (clave === "fs_vivo_activo" || clave === "lab_activo" || clave === "lab_push") return typeof v === "boolean";
+  if (clave === "lab_push_amigos" || clave === "corners_push_amigos") return typeof v === "boolean";
+  if (clave === "lab_umbral_fijo" || clave === "corners_cuota_min_fija") return typeof v === "number" && (v === 0 || (v > 1 && v <= 20));
   if (clave === "fs_vivo_max_consultas") return typeof v === "number" && Number.isInteger(v) && v >= 3 && v <= 60;
   if (clave === "escaneo_activo" || clave === "cuotas_siempre" || clave === "excluir_reempate" || clave === "excluir_roja_fav") return typeof v === "boolean";
   return typeof v === "number" && Number.isFinite(v) && v >= 0;
