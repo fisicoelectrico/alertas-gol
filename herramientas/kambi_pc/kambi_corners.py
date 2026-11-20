@@ -29,7 +29,10 @@ import urllib.request
 from datetime import datetime
 
 API_APP = "https://zdhkhsrwvvripuczhvam.supabase.co/functions/v1/api/admin/corners-casa"
-KAMBI = "https://eu-offering-api.kambicdn.com/offering/v2018/{codigo}"
+# Servidor de Kambi para Colombia (visto por Fredy en Chrome el 19 nov: us.offering-api…/betplay/…).
+# El de Europa (eu-offering-api) responde 429 "No access". Se cambia con --servidor.
+KAMBI = "https://{servidor}/offering/v2018/{codigo}"
+SERVIDOR = "us.offering-api.kambicdn.com"
 PARAMS = "lang=en_GB&market=CO&client_id=2&channel_id=1"
 # Código de cada casa en Kambi. Si --probar dice que no responde, se puede cambiar con --betplay / --rushbet
 # (ver LEEME.md: cómo encontrar el código en el navegador).
@@ -52,7 +55,7 @@ def pedir(url, cuerpo=None, timeout=20):
 
 def en_vivo(codigo):
     """Partidos de fútbol en vivo de una casa: [{evento, liveData}]."""
-    url = f"{KAMBI.format(codigo=codigo)}/listView/football/all/all/all/in-play.json?{PARAMS}&useCombined=true"
+    url = f"{KAMBI.format(servidor=SERVIDOR, codigo=codigo)}/listView/football/all/all/all/in-play.json?{PARAMS}&useCombined=true"
     return pedir(url).get("events", [])
 
 
@@ -74,7 +77,7 @@ def importa(minuto, periodo):
 
 def mercados_corners(codigo, evento_id):
     """Mercados de córners de un partido: [{nombre, lineas: [{lado, linea, cuota}]}]."""
-    url = f"{KAMBI.format(codigo=codigo)}/betoffer/event/{evento_id}.json?{PARAMS}&includeParticipants=true"
+    url = f"{KAMBI.format(servidor=SERVIDOR, codigo=codigo)}/betoffer/event/{evento_id}.json?{PARAMS}&includeParticipants=true"
     out = []
     for bo in pedir(url).get("betOffers", []):
         crit = bo.get("criterion") or {}
@@ -126,13 +129,16 @@ def vuelta(casa, codigo, maximo):
 
 
 def main():
+    global SERVIDOR
     ap = argparse.ArgumentParser(description="Cuotas de córners de BetPlay y Rushbet → ADN Soccer")
     ap.add_argument("--probar", action="store_true", help="una vuelta, muestra lo encontrado y no sube nada")
     ap.add_argument("--cada", type=float, default=3, help="minutos entre vueltas (mínimo 2)")
     ap.add_argument("--max", type=int, default=25, help="máximo de partidos por casa en cada vuelta")
     ap.add_argument("--betplay", default=CODIGOS["betplay"], help="código de BetPlay en Kambi ('' para no leerla)")
     ap.add_argument("--rushbet", default=CODIGOS["rushbet"], help="código de Rushbet en Kambi ('' para no leerla)")
+    ap.add_argument("--servidor", default=SERVIDOR, help="servidor de Kambi (por defecto us.offering-api.kambicdn.com)")
     a = ap.parse_args()
+    SERVIDOR = a.servidor
     casas = {k: v for k, v in {"betplay": a.betplay, "rushbet": a.rushbet}.items() if v}
 
     pin = None

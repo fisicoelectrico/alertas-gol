@@ -16,7 +16,7 @@ Esto da una vuelta y muestra, para cada casa, cuántos partidos hay en vivo y lo
 Si una casa dice "Kambi respondió 404" o algo parecido, el código de esa casa no es el correcto. Para encontrarlo:
 1. Abre la página de en vivo de la casa en Chrome y pulsa F12 → pestaña **Network**.
 2. Escribe `offering` en el filtro.
-3. Verás direcciones como `.../offering/v2018/XXXX/...`. La parte `XXXX` es el código.
+3. Verás direcciones como `https://us.offering-api.kambicdn.com/offering/v2018/XXXX/...`. La parte `XXXX` es el código. Si el servidor no es `us.offering-api.kambicdn.com`, pásalo con `--servidor`.
 4. Pruébalo así: `python kambi_corners.py --probar --betplay XXXX` (o `--rushbet XXXX`).
 
 ## Paso 2: dejarlo corriendo
