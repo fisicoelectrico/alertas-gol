@@ -140,11 +140,30 @@ async function guardar(e: EventoKambi, fsId: string | null, fixtureId: number | 
   }
 }
 
-/** Partidos donde importa tener cuotas en este ciclo, por orden de prioridad. */
-function franjaCorners(p: FS.PartidoFS): boolean {
+/**
+ * Franjas de córners para pedir cuotas ANTES de que el aviso dispare (20 nov, Fredy: "mañana se viene mucho
+ * fútbol"). Antes la franja estaba fija (15'-38' y 72'-82') y empezaba justo en el minuto del aviso (15' y 70'
+ * en la config actual): el aviso preguntaba por la cuota en el mismo ciclo en que el partido entraba a la cola,
+ * y la lectura llegaba 2 min después ("sin lectura" en 19 de 27 casos el 20 nov). Ahora la franja sale de la
+ * config de córners y empieza kambi_anticipo_min antes. Devuelve los minutos que faltan para la ventana
+ * (0 = ya está dentro) o null si no hace falta leerlo.
+ */
+function franjaCorners(cfg: Config, p: FS.PartidoFS, cornersKambi: number | null): number | null {
   const em = FS.estadoYMinuto(p);
-  if (em.minuto === null) return false;
-  return (em.estado === "1H" && em.minuto >= 15 && em.minuto <= 38) || (em.estado === "2H" && em.minuto >= 72 && em.minuto <= 82);
+  if (em.minuto === null) return null;
+  const m = em.minuto, ant = Math.max(0, Number(cfg.kambi_anticipo_min ?? 8));
+  if (em.estado === "1H") {
+    // Con 2 o más córners ya no puede avisar ningún mercado del 1T (0 córners o exactamente 1)
+    if (cornersKambi !== null && cornersKambi >= 2) return null;
+    const desde = Math.min(Number(cfg.corners_1t_min_desde ?? 20), Number(cfg.corners_1t_uno_desde ?? 28));
+    const hasta = Math.max(Number(cfg.corners_1t_min_hasta ?? 26), Number(cfg.corners_1t_uno_hasta ?? 37)) + 1;
+    return m >= desde - ant && m <= hasta ? Math.max(0, desde - m) : null;
+  }
+  if (em.estado === "2H") {
+    const desde = Number(cfg.corners_2t_min_desde ?? 77), hasta = Number(cfg.corners_2t_min_hasta ?? 80) + 1;
+    return m >= desde - ant && m <= hasta ? Math.max(0, desde - m) : null;
+  }
+  return null;
 }
 
 /**
@@ -162,7 +181,7 @@ export async function cicloKambi(args: {
   const casas: Record<string, string> = (cfg.kambi_casas && typeof cfg.kambi_casas === "object")
     ? cfg.kambi_casas as Record<string, string> : { betplay: "betplay", rushbet: "rsico" };
   const intervalo = Math.max(1, Number(cfg.kambi_intervalo_min ?? 3));
-  const maxEv = Math.max(0, Number(cfg.kambi_max_eventos ?? 15));
+  const maxEv = Math.max(0, Number(cfg.kambi_max_eventos ?? 40));
   const vig = Math.max(1, Number(cfg.kambi_vigencia_min ?? 5));
   const pareja = new Map<string, EventoKambi[]>();
   const resumen: Record<string, unknown> = {};
@@ -192,8 +211,17 @@ export async function cicloKambi(args: {
         if (e) pareja.set(fsId, [...(pareja.get(fsId) ?? []), e]);
       }
       // Qué leer: prioridad (candidatos, gol temprano) primero; luego las franjas de córners
-      const quiere = [...pares.keys()].filter((fs) => prioridad.has(fs) || (porFs.get(fs) && franjaCorners(porFs.get(fs)!)))
-        .sort((a, b) => Number(prioridad.has(b)) - Number(prioridad.has(a)));
+      // (dentro de las franjas, el que está más cerca de su ventana primero, por si se llega al tope)
+      const falta = new Map<string, number>();
+      for (const fs of pares.keys()) {
+        const p = porFs.get(fs), e = porId.get(pares.get(fs)!.fixture_id);
+        const ck = e && e.cl !== null && e.cv !== null ? e.cl + e.cv : null;
+        const f = p ? franjaCorners(cfg, p, ck) : null;
+        if (prioridad.has(fs)) falta.set(fs, -1);
+        else if (f !== null) falta.set(fs, f);
+      }
+      const quiere = [...falta.keys()].sort((a, b) => falta.get(a)! - falta.get(b)!);
+      if (quiere.length > maxEv) log(`kambi: ${casa} quiere ${quiere.length} partidos, tope kambi_max_eventos = ${maxEv}`);
       if (via === "cola") {
         // 1. Guardar las cuotas que trajo el cron desde el ciclo anterior (la más nueva de cada partido)
         let guardadas = 0;
@@ -218,7 +246,7 @@ export async function cicloKambi(args: {
                     values (${casa}, ${e.id}, ${fs}, ${fixtureDe(fs)}, now() + interval '6 minutes')
                     on conflict (casa, evento_id) do update set hasta = excluded.hasta, fs_id = excluded.fs_id, fixture_id = excluded.fixture_id`;
         }
-        resumen[casa] = { en_vivo: lista.length, emparejados: pares.size, guardadas, pedidos: pedir.length };
+        resumen[casa] = { en_vivo: lista.length, emparejados: pares.size, guardadas, pedidos: pedir.length, quiere: quiere.length };
         return;
       }
       const recientes = quiere.length ? new Set((await sql`select distinct fs_id from futbol.cuotas_casa

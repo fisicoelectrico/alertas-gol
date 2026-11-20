@@ -219,6 +219,18 @@ export async function cicloCorners(args: {
       // ninguna de las dos, el aviso se guarda pero no hay push (regla de Fredy del 19 nov).
       try { ofK = await kambi.oferta(p.id, es1T(mercado) ? "corners_1t" : "corners", linea); }
       catch (e) { log(`córners: kambi ${p.id}: ${(e as Error).message}`); }
+      // 20 nov: BetPlay/Rushbet tienen el partido pero la cola todavía no trajo sus cuotas. En vez de cerrar el
+      // aviso "sin lectura" (pasó en 19 de 27 casos el 20 nov), se espera al siguiente ciclo mientras siga dentro
+      // de la ventana y no hayan pasado kambi_espera_min desde que se abrió. Los córners se vuelven a leer en
+      // cada ciclo, así que si llega uno mientras tanto el chequeo se cierra como "con_corners", como debe ser.
+      if (ofK?.estado === "sin_lectura") {
+        const [desde, hasta] = mercado === "c1t_cero20" ? [P.t1_desde, P.t1_hasta]
+          : mercado === "c1t_uno" ? [P.t1u_desde, P.t1u_hasta] : [P.t2_desde, P.t2_hasta];
+        if (minuto < hasta && minuto < desde + Math.max(0, Number(cfg.kambi_espera_min ?? 6))) {
+          log(`córners: ${mercado} ${p.local}-${p.visitante} min ${minuto}: espera la lectura de BetPlay/Rushbet`);
+          continue;
+        }
+      }
       consultada = !!ofK && ofK.estado !== "kambi_caido";
       hayMercado = ofK ? (ofK.estado === "ofrece" || ofK.estado === "sin_linea") : null;
       if (ofK?.estado === "ofrece") { cuota = ofK.casas[ofK.casas.length - 1].c; mercadoNombre = `Kambi: ${ofK.casas.map((x) => x.casa).join(", ")}`; }

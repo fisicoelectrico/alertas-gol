@@ -235,10 +235,25 @@ export function fichas(nombre: string): string[] {
 // nada: "Glasgow City W" y "Eskilstuna Utd W" daban 0,5 solo por la "W" y se cruzaban dos partidos
 // femeninos distintos que empezaban a la misma hora (falla del 15 nov 2026).
 const CATEGORIA = /^(w|women|femenino|fem|u\d{2}|ii|b|reserves?|reserva)$/;
+// Misma palabra con otra transliteración: "Sumqayit" / "Sumgayit" (Flashscore / Kambi, 20 nov). Una letra
+// distinta en palabras de 6+ letras, o dos en palabras de 9+. Las cortas tienen que ser iguales.
+function casiIguales(x: string, y: string): boolean {
+  const n = Math.min(x.length, y.length);
+  if (n < 6 || Math.abs(x.length - y.length) > 1) return false;
+  const tope = n >= 9 ? 2 : 1;
+  let prev = Array.from({ length: y.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= x.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= y.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1));
+    if (Math.min(...cur) > tope) return false;
+    prev = cur;
+  }
+  return prev[y.length] <= tope;
+}
 function comunes(a: string, b: string): { comun: number; reales: number; total: number } {
   const A = fichas(a), B = fichas(b);
   let comun = 0, reales = 0;
-  for (const x of A) if (B.some((y) => y === x || (x.length >= 4 && y.length >= 4 && (y.startsWith(x) || x.startsWith(y))))) {
+  for (const x of A) if (B.some((y) => y === x || (x.length >= 4 && y.length >= 4 && (y.startsWith(x) || x.startsWith(y))) || casiIguales(x, y))) {
     comun++;
     if (!CATEGORIA.test(x)) reales++;
   }
