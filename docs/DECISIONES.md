@@ -329,3 +329,9 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 **Por qué por equipo y no por partido.** El mismo equipo vuelve a jugar cada semana con otro rival; guardar el alias del equipo hace que la siguiente vez empareje solo. El riesgo (un alias de nombre genérico que se cruce con otro equipo) es bajo: además del nombre, `emparejar` exige la misma hora (±20 min) y la misma categoría (W, U19, II…).
 
 **Volver atrás.** `delete from futbol.kambi_alias where id = …` (o la tabla entera). Migración solo aditiva: `20261120210000_futbol_kambi_alias.sql`.
+
+## 70. El monto sugerido sale de la casa que MÁS paga (20 nov 2026, Fredy por Oss–Roda)
+
+**Caso.** Primera alerta de Oss 1-0 Roda (min 69) después de confirmar el alias: la push decía "Entra $7.100 en Rushbet a 1,56" con BetPlay pagando 1,58. Desde DECISIONES 57 el monto se calculaba con la casa más baja (criterio conservador: si entras donde paga más, ganas un poco más de la meta). Pero leído en la push, "en Rushbet" suena a recomendación de dónde entrar, y ahí pierdes cuota.
+
+**Cambio.** `lineasEntrada` toma la casa con la cuota más alta de la lista de la push (BetPlay/Rushbet) para el monto y para el texto "Entra $X en <casa> a <cuota>". Aplica a la alerta principal, gol temprano y córners (todas pasan por esa función). La decisión de si sale la push (umbral) no cambia: ya usaba la mejor de las dos.

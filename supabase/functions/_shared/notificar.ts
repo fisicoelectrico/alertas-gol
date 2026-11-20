@@ -94,14 +94,18 @@ export function lineasEntrada(o: {
   pais: string | null; liga: string | null; partido: string; mercado: string; contexto?: string | null; etiqueta?: string;
   d: Destinatario; casas: { casa: string; c: number }[]; cuotaMonto: number | null; casaMonto: string | null; maxPct: number;
 }): string {
-  const m = montoSugerido(o.d, o.cuotaMonto, o.maxPct);
+  // Fredy (20 nov, Oss–Roda): la push decía "Entra en Rushbet a 1,56" cuando BetPlay pagaba 1,58. El monto y la
+  // casa salen ahora de la casa que MÁS paga (donde conviene entrar); antes salían de la que menos (DECISIONES 70).
+  const top = o.casas.filter((x) => x.casa && x.casa !== "Promedio" && x.c > 1).reduce<{ casa: string; c: number } | null>((a, x) => (!a || x.c > a.c ? x : a), null);
+  const cuotaM = top?.c ?? o.cuotaMonto, casaM = top?.casa ?? o.casaMonto;
+  const m = montoSugerido(o.d, cuotaM, o.maxPct);
   const lineas = [
     o.pais || null,
     o.liga || null,
     o.partido,
     o.contexto || null,
     `${o.etiqueta ?? "Mercado"}: ${o.mercado}`,
-    m ? `Entra ${pesos(m.monto)}${o.casaMonto ? ` en ${o.casaMonto}` : ""} a ${cuotaTxt(o.cuotaMonto)} → ganas ${pesos(m.gana)}${m.tope ? ` (tope ${o.maxPct} % de tu banca)` : ""}` : null,
+    m ? `Entra ${pesos(m.monto)}${casaM ? ` en ${casaM}` : ""} a ${cuotaTxt(cuotaM)} → ganas ${pesos(m.gana)}${m.tope ? ` (tope ${o.maxPct} % de tu banca)` : ""}` : null,
     o.casas.length ? o.casas.map((x) => `${x.casa} ${cuotaTxt(x.c)}`).join(" · ") : null,
   ];
   return lineas.filter(Boolean).join("\n");
