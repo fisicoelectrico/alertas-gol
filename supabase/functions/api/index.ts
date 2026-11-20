@@ -196,14 +196,15 @@ async function widget() {
     select fixture_id from futbol.partidos where seguimiento
     union select fixture_id from futbol.alertas where resultado = 'pendiente'`).map((r: any) => String(r.fixture_id)));
   const partidos = (u.radar ?? []).map((p: any) => ({
-    id: p.id, e: p.e, m: p.m, l: p.l, v: p.v, gl: p.gl, gv: p.gv, fav: p.fav, liga: p.liga, pais: p.pais ?? null, c: segs.has(String(p.id)),
+    id: p.id, e: p.e, m: p.m, l: p.l, v: p.v, gl: p.gl, gv: p.gv, fav: p.fav, liga: p.liga, pais: p.pais ?? null, c: segs.has(String(p.id)), ...(p.kb !== undefined ? { kb: p.kb } : {}), ...(p.kbn ? { kbn: p.kbn } : {}),
   })).sort((a: any, b: any) => Number(b.c) - Number(a.c) || (b.m ?? -1) - (a.m ?? -1));
   // vivos se cuenta sobre la lista ya filtrada (el conteo guardado incluye todas las ligas)
   const vivos = partidos.filter((p: any) => ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(p.e)).length;
   // Widget v2 (20 nov, Fredy): solo favoritos perdiendo + estado de BetPlay y Rushbet. Las claves viejas
   // se quedan para que el APK anterior siga funcionando.
+  // DECISIONES 64 (Fredy, 20 nov): fuera los que BetPlay/Rushbet no ofrecen (kb === false); sin dato de Kambi se muestran.
   const perdiendo = partidos.filter((p: any) => ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(p.e) &&
-    ((p.fav === "home" && p.gl < p.gv) || (p.fav === "away" && p.gv < p.gl)))
+    ((p.fav === "home" && p.gl < p.gv) || (p.fav === "away" && p.gv < p.gl)) && p.kb !== false)
     .map((p: any) => ({ ...p, liga: ligaCorta(p.liga) }));
   // Cuota "un gol más" (Over goles + 0,5) de BetPlay/Rushbet por partido, para la lista de Ahora (20 nov).
   // Solo lecturas de ≤ 5 min con el MISMO marcador (si hubo gol después, esa escalera ya no sirve).

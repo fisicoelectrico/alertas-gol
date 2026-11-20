@@ -285,7 +285,8 @@ function metricas(lista) {
 // resto. El buscador (equipo, liga o país) busca siempre en TODOS los partidos en vivo, para encontrar uno
 // rápido aunque no esté perdiendo el favorito. Filtrar es mostrar/ocultar filas ya pintadas: no hay consultas.
 const EN_JUEGO = ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"];
-const favPierde = (p) => (p.fav === "home" && p.gl < p.gv) || (p.fav === "away" && p.gv < p.gl);
+// DECISIONES 64: "favorito perdiendo" solo cuenta si BetPlay/Rushbet tienen el partido (kb === false = no lo ofrecen).
+const favPierde = (p) => ((p.fav === "home" && p.gl < p.gv) || (p.fav === "away" && p.gv < p.gl)) && p.kb !== false;
 const sinTildes = (t) => String(t ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 let vistaVivo = (() => { try { return localStorage.getItem("vistaVivo") || "perdiendo"; } catch (_) { return "perdiendo"; } })();
 let busquedaVivo = "";
@@ -301,7 +302,7 @@ function listaEnVivo(w, abiertas) {
   const cuota = (p) => {
     if (!p.k?.casas?.length) return "";
     const mejor = p.k.casas.reduce((x, y) => (y.c > x.c ? y : x));
-    return `<span class="vcuota num" title="${esc(p.k.casas.map((x) => `${x.casa} ${n(x.c)}`).join(" · "))}">O${n(p.k.linea, 1)} <b>${n(mejor.c)}</b></span>`;
+    return `<span class="vcuota" title="${esc(p.k.casas.map((x) => `${x.casa} ${n(x.c)}`).join(" · "))}">Más de ${n(p.k.linea, 1)} goles <b class="num">${n(mejor.c)}</b></span>`;
   };
   const fila = (p) => `<button type="button" class="vfila ${p.c ? "cumple" : ""}" data-perd="${favPierde(p) ? 1 : 0}"
       data-q="${esc(sinTildes(`${p.l} ${p.v} ${p.liga ?? ""} ${p.pais ?? ""}`))}" ${p.id != null ? `data-ficha="${esc(p.id)}"` : "disabled"} aria-label="Ver estadísticas de ${esc(p.l)} contra ${esc(p.v)}">
@@ -309,7 +310,7 @@ function listaEnVivo(w, abiertas) {
       <span class="vequipos"><span>${esc(p.l)}${p.fav === "home" ? " <i class=\"vfav\">★</i>" : ""}</span><span>${esc(p.v)}${p.fav === "away" ? " <i class=\"vfav\">★</i>" : ""}</span>
         <small class="vliga">${esc([p.pais, ligaCortaTxt(p.liga)].filter(Boolean).join(" · "))}</small></span>
       <b class="vgoles num">${p.gl}<br>${p.gv}</b>
-      <span class="vpie">${p.c ? `<span class="vcumple">Candidato</span>` : ""}${cuota(p)}</span>
+      <span class="vpie">${p.c ? `<span class="vcumple">Candidato</span>` : ""}${cuota(p)}${p.kb === false ? `<span class="vsin">Sin BetPlay/Rushbet</span>` : ""}${p.kb === "revisar" ? `<span class="vrevisar" title="Solo un equipo coincide con BetPlay/Rushbet">Revisar: en BetPlay sería ${esc(p.kbn || "otro nombre")}</span>` : ""}</span>
       <span class="vflecha" aria-hidden="true">›</span>
     </button>`;
   return `<div class="titulo-seccion"><h2>En vivo</h2><small>${w.ts ? hace(w.ts) : ""}</small></div>
@@ -320,7 +321,7 @@ function listaEnVivo(w, abiertas) {
     </div>
     <div class="tarjeta lista-vivo" id="lista-vivo">${vivos.map(fila).join("")}</div>
     <div class="tarjeta vacio" id="vivo-vacio" style="padding:16px" hidden></div>
-    <p class="nota explica">Toca un partido para ver cuotas, presión, goles y estadísticas. ★ = favorito. O1.5 = cuota de "un gol más" en BetPlay/Rushbet. "Candidato" = el favorito va perdiendo y lo estamos midiendo, pero todavía no cumple todo. No es señal para entrar: solo cuenta cuando llega la alerta.</p>`;
+    <p class="nota explica">Toca un partido para ver cuotas, presión, goles y estadísticas. ★ = favorito. "Más de 1.5 goles 1.08" = la mejor cuota de BetPlay/Rushbet para que caiga un gol más; los partidos que ellos no ofrecen solo salen en "Todos en vivo". "Candidato" = el favorito va perdiendo y lo estamos midiendo, pero todavía no cumple todo. No es señal para entrar: solo cuenta cuando llega la alerta.</p>`;
 }
 // "COLOMBIA: Primera A - Clausura" → "Primera A" (el país ya va aparte)
 const ligaCortaTxt = (l) => String(l ?? "").replace(/^[^:]*:\s*/, "").split(" - ")[0];
@@ -422,11 +423,11 @@ function bloqueCuotas(d, gl, gv) {
   const mejor = principal.length ? Math.max(...principal.map((c) => Number(c.goles[linea]))) : null;
   const ult = cs.reduce((x, y) => (new Date(y.ts) > new Date(x.ts) ? y : x));
   return `${titulo}<div class="tarjeta cuotas-ficha">
-    <div class="cf-top"><div><span>Un gol más · Over ${n(Number(linea), 1)}</span>
+    <div class="cf-top"><div><span>Un gol más · Más de ${n(Number(linea), 1)} goles</span>
       ${mejor ? `<small>Prob. implícita ${Math.round(100 / mejor)} %</small>` : `<small>Sin esta línea ahora</small>`}</div>
       <div class="cf-casas">${principal.map((c) => `<div class="${Number(c.goles[linea]) === mejor ? "mejor" : ""}"><small>${esc(c.casa)}</small><b class="num">${n(c.goles[linea])}</b></div>`).join("") || `<b class="num tenue">–</b>`}</div></div>
-    ${lineas.length > 1 ? `<table class="cf-tabla"><thead><tr><th>Over</th>${cs.map((c) => `<th>${esc(c.casa)}</th>`).join("")}</tr></thead><tbody>
-      ${lineas.map((l) => `<tr class="${String(l) === linea ? "on" : ""}"><td>${n(l, 1)}</td>${cs.map((c) => `<td class="num">${n(c.goles[String(l)])}</td>`).join("")}</tr>`).join("")}
+    ${lineas.length > 1 ? `<table class="cf-tabla"><thead><tr><th>Más de</th>${cs.map((c) => `<th>${esc(c.casa)}</th>`).join("")}</tr></thead><tbody>
+      ${lineas.map((l) => `<tr class="${String(l) === linea ? "on" : ""}"><td>${n(l, 1)} goles</td>${cs.map((c) => `<td class="num">${n(c.goles[String(l)])}</td>`).join("")}</tr>`).join("")}
     </tbody></table>` : ""}
     <p class="cf-pie">${viejas.length ? "⚠ Una lectura es de antes del último gol. " : ""}Lectura ${hace(ult.ts)}${ult.minuto != null ? ` · al ${esc(ult.minuto)}'` : ""}</p>
   </div>`;

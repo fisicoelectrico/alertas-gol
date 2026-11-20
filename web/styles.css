@@ -570,3 +570,5 @@ button.vfila:disabled .vflecha { visibility: hidden; }
 .presion-ficha { padding: 12px 14px; }
 .pf-eq { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; color: var(--tenue); }
 .pf-eq span { max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vsin { margin-top: 3px; font-size: 11px; color: var(--tenue); opacity: .75; }
+.vrevisar { margin-top: 3px; font-size: 11px; font-weight: 700; color: var(--ambar); border: 1px solid var(--ambar); border-radius: 10px; padding: 0 8px; }
