@@ -200,7 +200,7 @@ async function widget() {
     select fixture_id from futbol.partidos where seguimiento
     union select fixture_id from futbol.alertas where resultado = 'pendiente'`).map((r: any) => String(r.fixture_id)));
   const partidos = (u.radar ?? []).map((p: any) => ({
-    id: p.id, e: p.e, m: p.m, l: p.l, v: p.v, gl: p.gl, gv: p.gv, fav: p.fav, liga: p.liga, pais: p.pais ?? null, c: segs.has(String(p.id)), ...(p.kb !== undefined ? { kb: p.kb } : {}), ...(p.kbn ? { kbn: p.kbn } : {}),
+    id: p.id, e: p.e, m: p.m, l: p.l, v: p.v, gl: p.gl, gv: p.gv, fav: p.fav, liga: p.liga, pais: p.pais ?? null, c: segs.has(String(p.id)), ...(p.kb !== undefined ? { kb: p.kb } : {}), ...(p.kbn ? { kbn: p.kbn } : {}), ...(p.kbd ? { kbd: p.kbd } : {}),
   })).sort((a: any, b: any) => Number(b.c) - Number(a.c) || (b.m ?? -1) - (a.m ?? -1));
   // vivos se cuenta sobre la lista ya filtrada (el conteo guardado incluye todas las ligas)
   const vivos = partidos.filter((p: any) => ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(p.e)).length;
@@ -1095,6 +1095,25 @@ Deno.serve(async (req) => {
         await sql`update futbol.ligas set habilitada = ${!!body.habilitada} where id = ${Number(body.id)}`;
         // Excluir surte efecto ya: sus partidos salen del seguimiento sin esperar el próximo ciclo del escáner
         if (!body.habilitada) await sql`update futbol.partidos set seguimiento = false where seguimiento and liga_id = ${Number(body.id)}`;
+        return json({ ok: true });
+      }
+      // DECISIONES 69: Fredy confirma (o descarta) una pareja dudosa Flashscore ↔ BetPlay/Rushbet desde Ahora
+      if (ruta === "/admin/kambi-alias") {
+        const t = (x: unknown) => String(x ?? "").trim().slice(0, 120);
+        const fl = t(body?.fl), fv = t(body?.fv), kl = t(body?.kl), kv = t(body?.kv);
+        if (!fl || !fv || !kl || !kv) return json({ error: "Faltan los nombres de los equipos" }, 400);
+        if (body?.decision === "si") {
+          // Un alias por equipo; si Fredy antes dijo "No es" a esta misma pareja, se borra ese rechazo
+          for (const [fs, k] of [[fl, kl], [fv, kv]]) {
+            if (fs === k) continue;
+            await sql`insert into futbol.kambi_alias (fs, kambi, decision) values (${fs}, ${k}, 'si')
+                      on conflict (fs, kambi) do update set decision = 'si', creado = now()`;
+          }
+          await sql`delete from futbol.kambi_alias where decision = 'no' and fs = ${`${fl}|${fv}`} and kambi = ${`${kl} - ${kv}`}`;
+        } else if (body?.decision === "no") {
+          await sql`insert into futbol.kambi_alias (fs, kambi, decision) values (${`${fl}|${fv}`}, ${`${kl} - ${kv}`}, 'no')
+                    on conflict (fs, kambi) do update set decision = 'no', creado = now()`;
+        } else return json({ error: "decision debe ser si o no" }, 400);
         return json({ ok: true });
       }
       if (ruta === "/admin/corners") return json(await cornersLab());
