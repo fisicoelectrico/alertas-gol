@@ -289,9 +289,16 @@ export async function cicloKambi(args: {
 export const casasJson = (o: OfertaCasa) => Object.fromEntries(o.casas.map((x) => [x.casa, x.c]));
 
 /** ¿Sale la push? Regla de Fredy: solo si BetPlay o Rushbet ofrecen esa línea. Kambi caído: según config. */
-export function pasaPush(cfg: Config, o: OfertaCasa, esGoles: boolean): { sale: boolean; motivo: string | null } {
+export function pasaPush(cfg: Config, o: OfertaCasa, esGoles: boolean, umbral?: number | null): { sale: boolean; motivo: string | null } {
   if (cfg.kambi_exigir === false || o.estado === "apagado") return { sale: true, motivo: null };
-  if (o.estado === "ofrece") return { sale: true, motivo: null };
+  if (o.estado === "ofrece") {
+    // Fredy (20 nov): BetPlay o Rushbet tienen que pagar el umbral; si solo lo paga Wplay/Betano no es una
+    // entrada real para él. kambi_exigir_umbral = false vuelve a exigir solo que tengan la línea.
+    const mejor = Math.max(...o.casas.map((x) => x.c));
+    if (cfg.kambi_exigir_umbral !== false && umbral != null && Number.isFinite(umbral) && mejor < umbral)
+      return { sale: false, motivo: "casas_bajo_umbral" };
+    return { sale: true, motivo: null };
+  }
   // Sin saber (Kambi caído o el partido recién entró a la cola): las de goles salen igual, con el motivo
   if ((o.estado === "kambi_caido" || o.estado === "sin_lectura") && esGoles && cfg.kambi_caido_avisa !== false) return { sale: true, motivo: o.estado };
   return { sale: false, motivo: o.estado === "kambi_caido" ? "kambi_caido" : `casas_${o.estado}` };
