@@ -191,7 +191,27 @@ export async function fotoCornersApi(args: { cfg: Config; vivosFS: FS.PartidoFS[
     if (items.length) {
       for (const r of await sql`select * from futbol.api_fs_pareja where fixture_api = any(${items.map((x: any) => x.id)}::int[])`) pareja.set(r.fixture_api, r);
     }
-    const nuevos = items.filter((x: any) => !pareja.has(x.id));
+    // Reintento gratis (19 nov): la primera vez que aparece un fixture, Flashscore a veces todavía no lo
+    // muestra en vivo (Vasco–Internacional, Yumbo–Envigado quedaron sin pareja). Si ya guardamos sus
+    // nombres, se vuelve a emparejar contra la lista actual sin gastar consulta.
+    const sinPar = items.filter((x: any) => { const r = pareja.get(x.id); return r && !r.fs_id && r.local; });
+    if (sinPar.length) {
+      const usados = new Set((await sql`select fs_id from futbol.api_fs_pareja where fs_id = any(${enVivo.map((p) => p.id)}::text[])`)
+        .map((r: any) => r.fs_id));
+      const mapa = FS.emparejar(enVivo.filter((p) => !usados.has(p.id)), sinPar.map((x: any) => {
+        const r = pareja.get(x.id);
+        return { fixture_id: x.id, local: r.local, visitante: r.visitante, kickoff: new Date(r.inicio).getTime() };
+      }));
+      for (const [fs, m] of mapa) {
+        const [fila] = await sql`update futbol.api_fs_pareja set fs_id = ${fs}, puntaje = ${m.puntaje}
+                                 where fixture_api = ${m.fixture_id} and fs_id is null returning *`;
+        if (fila) pareja.set(m.fixture_id, fila);
+      }
+      if (mapa.size) log(`córners api: ${mapa.size} fixtures sin pareja se emparejaron en el reintento`);
+    }
+    // Sin nombres (no venían en /fixtures?live=all): se vuelven a pedir pasados 10 minutos
+    const viejoSinNombre = (r: any) => r && !r.fs_id && !r.local && Date.now() - new Date(r.creado).getTime() > 10 * 60000;
+    const nuevos = items.filter((x: any) => !pareja.has(x.id) || viejoSinNombre(pareja.get(x.id)));
     if (nuevos.length && api.quedan() > 0) {
       try {
         const fx = await api.get("/fixtures", { live: "all" });
@@ -213,7 +233,11 @@ export async function fotoCornersApi(args: { cfg: Config; vivosFS: FS.PartidoFS[
             values (${x.id}, ${m?.fs ?? null}, ${m?.puntaje ?? null},
                     ${f ? `${f.league?.country ?? ""}: ${f.league?.name ?? ""}` : null},
                     ${f?.teams?.home?.name ?? null}, ${f?.teams?.away?.name ?? null}, ${f ? f.fixture.date : null})
-            on conflict (fixture_api) do nothing returning *`;
+            on conflict (fixture_api) do update set fs_id = coalesce(futbol.api_fs_pareja.fs_id, excluded.fs_id),
+              puntaje = coalesce(futbol.api_fs_pareja.puntaje, excluded.puntaje), liga = coalesce(futbol.api_fs_pareja.liga, excluded.liga),
+              local = coalesce(futbol.api_fs_pareja.local, excluded.local), visitante = coalesce(futbol.api_fs_pareja.visitante, excluded.visitante),
+              inicio = coalesce(futbol.api_fs_pareja.inicio, excluded.inicio), creado = now()
+            returning *`;
           if (fila) pareja.set(x.id, fila);
         }
         log(`córners api: ${fsDe.size}/${nuevos.length} fixtures nuevos emparejados con Flashscore`);
