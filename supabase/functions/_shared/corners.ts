@@ -226,7 +226,10 @@ export async function cicloCorners(args: {
       if (ofK?.estado === "sin_lectura") {
         const [desde, hasta] = mercado === "c1t_cero20" ? [P.t1_desde, P.t1_hasta]
           : mercado === "c1t_uno" ? [P.t1u_desde, P.t1u_hasta] : [P.t2_desde, P.t2_hasta];
-        if (minuto < hasta && minuto < desde + Math.max(0, Number(cfg.kambi_espera_min ?? 6))) {
+        // DECISIONES 72: en el 2T la ventana empieza cuando el favorito se pone a perder (no en un minuto fijo),
+        // así que el tope de kambi_espera_min contado desde el inicio de la ventana no aplica: espera hasta el final.
+        const tope = mercado === "c2t_fav77" ? hasta : desde + Math.max(0, Number(cfg.kambi_espera_min ?? 6));
+        if (minuto < hasta && minuto < tope) {
           log(`córners: ${mercado} ${p.local}-${p.visitante} min ${minuto}: espera la lectura de BetPlay/Rushbet`);
           continue;
         }
