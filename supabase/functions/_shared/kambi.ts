@@ -44,6 +44,9 @@ export interface OfertaCasa {
   estado: "ofrece" | "sin_linea" | "sin_mercado" | "sin_partido" | "sin_lectura" | "kambi_caido" | "apagado";
   casas: { casa: string; c: number }[];                       // la línea pedida, de mayor a menor
   cercana: { linea: number; casas: { casa: string; c: number }[] } | null;   // si no está, la más cercana por encima
+  /** DECISIONES 67: sin_mercado, pero ese mercado sí estaba en una lectura de los últimos kambi_suspension_min
+   *  minutos. Es una suspensión (gol, penal, VAR, córner a punto de cobrarse), no un partido sin córners. */
+  suspendido?: boolean;
 }
 
 export interface Kambi {
@@ -325,7 +328,17 @@ export async function cicloKambi(args: {
     }
     const orden = (a: { c: number }, b: { c: number }) => b.c - a.c;
     if (exacta.length) return { estado: "ofrece", casas: exacta.sort(orden), cercana: null };
-    if (!conMercado) return vacia("sin_mercado");
+    if (!conMercado) {
+      // DECISIONES 67 (Al Ahli–Al Nassr, 20 nov): la casa cierra el mercado unos segundos tras un gol o en una
+      // jugada de peligro. Si lo tenía hace poco, se marca como suspendido para que el aviso espere.
+      const min = Math.max(1, Number(cfg.kambi_suspension_min ?? 10));
+      const [r] = await sql`
+        select exists (select 1 from futbol.cuotas_casa c
+                       where c.fs_id = ${fsId} and c.ts > now() - make_interval(mins => ${min})
+                         and jsonb_typeof(to_jsonb(c) -> ${tipo}::text) = 'object'
+                         and to_jsonb(c) -> ${tipo}::text <> '{}'::jsonb) as habia`;
+      return { ...vacia("sin_mercado"), suspendido: !!r?.habia };
+    }
     const l = [...otras.keys()].sort((a, b) => a - b)[0];
     return { estado: "sin_linea", casas: [], cercana: l !== undefined ? { linea: l, casas: otras.get(l)!.sort(orden) } : null };
   }
