@@ -285,7 +285,8 @@ function metricas(lista) {
 // resto. El buscador (equipo, liga o país) busca siempre en TODOS los partidos en vivo, para encontrar uno
 // rápido aunque no esté perdiendo el favorito. Filtrar es mostrar/ocultar filas ya pintadas: no hay consultas.
 const EN_JUEGO = ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"];
-const favPierde = (p) => (p.fav === "home" && p.gl < p.gv) || (p.fav === "away" && p.gv < p.gl);
+// DECISIONES 64: "favorito perdiendo" solo cuenta si BetPlay/Rushbet tienen el partido (kb === false = no lo ofrecen).
+const favPierde = (p) => ((p.fav === "home" && p.gl < p.gv) || (p.fav === "away" && p.gv < p.gl)) && p.kb !== false;
 const sinTildes = (t) => String(t ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 let vistaVivo = (() => { try { return localStorage.getItem("vistaVivo") || "perdiendo"; } catch (_) { return "perdiendo"; } })();
 let busquedaVivo = "";
@@ -309,7 +310,7 @@ function listaEnVivo(w, abiertas) {
       <span class="vequipos"><span>${esc(p.l)}${p.fav === "home" ? " <i class=\"vfav\">★</i>" : ""}</span><span>${esc(p.v)}${p.fav === "away" ? " <i class=\"vfav\">★</i>" : ""}</span>
         <small class="vliga">${esc([p.pais, ligaCortaTxt(p.liga)].filter(Boolean).join(" · "))}</small></span>
       <b class="vgoles num">${p.gl}<br>${p.gv}</b>
-      <span class="vpie">${p.c ? `<span class="vcumple">Candidato</span>` : ""}${cuota(p)}</span>
+      <span class="vpie">${p.c ? `<span class="vcumple">Candidato</span>` : ""}${cuota(p)}${p.kb === false ? `<span class="vsin">Sin BetPlay/Rushbet</span>` : ""}</span>
       <span class="vflecha" aria-hidden="true">›</span>
     </button>`;
   return `<div class="titulo-seccion"><h2>En vivo</h2><small>${w.ts ? hace(w.ts) : ""}</small></div>
@@ -320,7 +321,7 @@ function listaEnVivo(w, abiertas) {
     </div>
     <div class="tarjeta lista-vivo" id="lista-vivo">${vivos.map(fila).join("")}</div>
     <div class="tarjeta vacio" id="vivo-vacio" style="padding:16px" hidden></div>
-    <p class="nota explica">Toca un partido para ver cuotas, presión, goles y estadísticas. ★ = favorito. O1.5 = cuota de "un gol más" en BetPlay/Rushbet. "Candidato" = el favorito va perdiendo y lo estamos midiendo, pero todavía no cumple todo. No es señal para entrar: solo cuenta cuando llega la alerta.</p>`;
+    <p class="nota explica">Toca un partido para ver cuotas, presión, goles y estadísticas. ★ = favorito. O1.5 = cuota de "un gol más" en BetPlay/Rushbet; los partidos que ellos no ofrecen solo salen en "Todos en vivo". "Candidato" = el favorito va perdiendo y lo estamos midiendo, pero todavía no cumple todo. No es señal para entrar: solo cuenta cuando llega la alerta.</p>`;
 }
 // "COLOMBIA: Primera A - Clausura" → "Primera A" (el país ya va aparte)
 const ligaCortaTxt = (l) => String(l ?? "").replace(/^[^:]*:\s*/, "").split(" - ")[0];

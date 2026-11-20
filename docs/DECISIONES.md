@@ -276,3 +276,10 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 - **Presión al vuelo:** IP y dominancia se calculan con `algoritmo.ts` (misma fórmula y pesos que el escáner) sobre las estadísticas de Flashscore que la ficha ya leía, así salen también en el 1.er tiempo y en partidos que el escáner no sigue. El momentum necesita una foto de hace ≥ `momentum_gap_min` en `snapshots` o `historial_stats`: si el escáner no fotografió el partido (por ejemplo, favorito con cuota previa por encima de `cuota_fav_max`, como Arminia a 2,24), queda vacío y se explica por qué.
 - **Quién ve qué:** cuotas para todos; presión solo para administradores (poka-yoke del 15 nov: a los amigos no se les muestran índices internos antes de la alerta).
 - No cambia la regla (sin versión nueva). Cero consultas a API-Football.
+
+## 64. "Favoritos perdiendo" solo muestra partidos que BetPlay/Rushbet ofrecen (20 nov 2026, a pedido de Fredy)
+- **Caso:** Bullom Stars 1-0 Wusum Stars (Sierra Leone, favorito visitante) salía en Ahora y en el widget, pero ni BetPlay ni Rushbet lo tienen: verificado en su lista en vivo de las 18:01Z (42 eventos cada una, ninguno de Sierra Leone).
+- **Cambio:** el escáner marca cada partido de la foto del radar con `kb` (true/false) según el emparejamiento Flashscore ↔ lista en vivo de Kambi que ya hace cada ciclo (`kambi.pareja`). Solo se marca si la lista se leyó (`kambi.ok`); si Kambi está caído no hay `kb` y no se oculta nada.
+- `/widget` → `perdiendo` excluye `kb === false` (el APK no cambia). En Ahora, "Favoritos perdiendo" usa la misma condición; en "Todos en vivo" y en el buscador esos partidos siguen saliendo, con la etiqueta "Sin BetPlay/Rushbet".
+- **Riesgo conocido:** si el emparejamiento falla por nombre (como Livyi Bereg antes de DECISIONES 61), un partido que sí ofrecen quedaría oculto del filtro. Se ve en "Todos en vivo".
+- No cambia la regla. Cero consultas a API-Football.

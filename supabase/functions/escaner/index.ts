@@ -449,6 +449,8 @@ Deno.serve(async (req) => {
           gl: f.goals.home ?? 0, gv: f.goals.away ?? 0, fav: favorito,
           cf: Number.isFinite(cuotaFav) ? cuotaFav : null, mo: motivo,
           ...(evaluaciones.has(id) ? { ev: evaluaciones.get(id) } : {}),
+          // kb: ¿BetPlay/Rushbet tienen el partido en su lista en vivo? (DECISIONES 64). Solo si se leyó la lista.
+          ...(kambi?.ok && f.__fs?.id ? { kb: kambi.pareja.has(f.__fs.id) } : {}),
         };
       });
     } catch (e) {
@@ -1112,7 +1114,7 @@ Deno.serve(async (req) => {
           id: `fs:${p.id}`, lg: 0, liga: (resto ?? p.liga).replace(/ - .*$/, ""),
           pais: paisFS ? paisFS.charAt(0) + paisFS.slice(1).toLowerCase() : null,
           l: p.local, v: p.visitante, e: em.estado, m: em.minuto, gl: p.gl, gv: p.gv,
-          fav: null, cf: null, mo: "sin_cruce",
+          fav: null, cf: null, mo: "sin_cruce", ...(kambi?.ok ? { kb: kambi.pareja.has(p.id) } : {}),
         };
       });
       const foto = fotoRadar();
