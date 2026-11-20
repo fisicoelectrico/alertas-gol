@@ -538,3 +538,35 @@ button.vfila:disabled .vflecha { visibility: hidden; }
 .desplegable[open] > summary { margin-bottom: 10px; }
 .desplegable[open] > summary::after { content: "▴"; }
 .tenue { color: var(--tenue); font-weight: 400; }
+
+/* Ahora (20 nov): buscador, filtro favoritos perdiendo / todos y cuota de "un gol más" en cada fila */
+.buscar-vivo input { width: 100%; text-align: left; background: var(--panel-2); border: 1px solid var(--linea); border-radius: 12px; padding: 11px 14px; color: var(--texto); font: inherit; font-size: 15px; margin-bottom: 8px; }
+.buscar-vivo input::placeholder { color: var(--tenue); }
+.vfila[hidden] { display: none; }
+.vliga { color: var(--tenue); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vpie { grid-area: cumple; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.vpie:empty { display: none; }
+.vpie .vcumple { margin-top: 3px; }
+.vcuota { margin-top: 3px; font-size: 11px; color: var(--tenue); border: 1px solid var(--linea); border-radius: 10px; padding: 0 8px; }
+.vcuota b { color: var(--texto); font-weight: 700; }
+
+/* Ficha (20 nov): cuotas de BetPlay/Rushbet y presión arriba de las estadísticas */
+.cuotas-ficha { padding: 12px 14px; }
+.cf-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.cf-top > div:first-child span { display: block; font-weight: 700; font-size: 15px; }
+.cf-top small { color: var(--tenue); font-size: 12px; }
+.cf-casas { display: flex; gap: 8px; }
+.cf-casas > div { background: var(--panel-2); border: 1px solid var(--linea); border-radius: 10px; padding: 6px 10px; text-align: center; min-width: 70px; }
+.cf-casas > div.mejor { border-color: var(--cesped); }
+.cf-casas small { display: block; font-size: 11px; color: var(--tenue); }
+.cf-casas b { font-size: 20px; font-weight: 700; }
+.cf-casas .mejor b { color: var(--cesped); }
+.cf-tabla { width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 13px; }
+.cf-tabla th { color: var(--tenue); font-weight: 600; font-size: 11px; text-align: right; padding: 3px 4px; }
+.cf-tabla th:first-child, .cf-tabla td:first-child { text-align: left; }
+.cf-tabla td { text-align: right; padding: 4px; border-top: 1px solid var(--linea); }
+.cf-tabla tr.on td { color: var(--cesped); font-weight: 700; }
+.cf-pie { margin-top: 8px; font-size: 11px; color: var(--tenue); }
+.presion-ficha { padding: 12px 14px; }
+.pf-eq { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; color: var(--tenue); }
+.pf-eq span { max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

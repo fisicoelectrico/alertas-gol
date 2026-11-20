@@ -281,23 +281,81 @@ function metricas(lista) {
 
 // Partidos en vivo, sin jerga: marcador, minuto y si es "candidato" (favorito que pierde y está en
 // seguimiento). Poka-yoke (Fredy, 15 nov): sello neutro, nunca "cumpliendo": solo la alerta es llamativa. Sale de la última foto del radar (/widget), no gasta consultas de API-Football.
+// 20 nov (Fredy): por defecto muestra lo MISMO que el widget (favoritos perdiendo); "Todos en vivo" abre el
+// resto. El buscador (equipo, liga o país) busca siempre en TODOS los partidos en vivo, para encontrar uno
+// rápido aunque no esté perdiendo el favorito. Filtrar es mostrar/ocultar filas ya pintadas: no hay consultas.
+const EN_JUEGO = ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"];
+const favPierde = (p) => (p.fav === "home" && p.gl < p.gv) || (p.fav === "away" && p.gv < p.gl);
+const sinTildes = (t) => String(t ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+let vistaVivo = (() => { try { return localStorage.getItem("vistaVivo") || "perdiendo"; } catch (_) { return "perdiendo"; } })();
+let busquedaVivo = "";
+
 function listaEnVivo(w, abiertas) {
   if (!w?.partidos) return "";
   const conAlerta = new Set(abiertas.map((a) => `${a.local}|${a.visitante}`));
-  const vivos = w.partidos.filter((p) => ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(p.e) && !conAlerta.has(`${p.l}|${p.v}`));
+  const vivos = w.partidos.filter((p) => EN_JUEGO.includes(p.e) && !conAlerta.has(`${p.l}|${p.v}`))
+    .sort((a, b) => Number(favPierde(b)) - Number(favPierde(a)) || Number(b.c) - Number(a.c) || (b.m ?? -1) - (a.m ?? -1));
   if (!vivos.length) return `<div class="titulo-seccion"><h2>En vivo</h2><small>${w.ts ? hace(w.ts) : ""}</small></div>
     <div class="tarjeta vacio" style="padding:16px">No hay partidos en vivo en este momento.</div>`;
-  const cumplen = vivos.filter((p) => p.c).length;
-  const fila = (p) => `<button type="button" class="vfila ${p.c ? "cumple" : ""}" ${p.id != null ? `data-ficha="${esc(p.id)}"` : "disabled"} aria-label="Ver estadísticas de ${esc(p.l)} contra ${esc(p.v)}">
+  const nPerd = vivos.filter(favPierde).length;
+  const cuota = (p) => {
+    if (!p.k?.casas?.length) return "";
+    const mejor = p.k.casas.reduce((x, y) => (y.c > x.c ? y : x));
+    return `<span class="vcuota num" title="${esc(p.k.casas.map((x) => `${x.casa} ${n(x.c)}`).join(" · "))}">O${n(p.k.linea, 1)} <b>${n(mejor.c)}</b></span>`;
+  };
+  const fila = (p) => `<button type="button" class="vfila ${p.c ? "cumple" : ""}" data-perd="${favPierde(p) ? 1 : 0}"
+      data-q="${esc(sinTildes(`${p.l} ${p.v} ${p.liga ?? ""} ${p.pais ?? ""}`))}" ${p.id != null ? `data-ficha="${esc(p.id)}"` : "disabled"} aria-label="Ver estadísticas de ${esc(p.l)} contra ${esc(p.v)}">
       <span class="vmin num">${p.e === "HT" ? "Desc." : p.m != null ? `${p.m}'` : esc(ESTADOS[p.e] || p.e)}</span>
-      <span class="vequipos"><span>${esc(p.l)}${p.fav === "home" ? " <i class=\"vfav\">★</i>" : ""}</span><span>${esc(p.v)}${p.fav === "away" ? " <i class=\"vfav\">★</i>" : ""}</span></span>
+      <span class="vequipos"><span>${esc(p.l)}${p.fav === "home" ? " <i class=\"vfav\">★</i>" : ""}</span><span>${esc(p.v)}${p.fav === "away" ? " <i class=\"vfav\">★</i>" : ""}</span>
+        <small class="vliga">${esc([p.pais, ligaCortaTxt(p.liga)].filter(Boolean).join(" · "))}</small></span>
       <b class="vgoles num">${p.gl}<br>${p.gv}</b>
-      ${p.c ? `<span class="vcumple">Candidato</span>` : ""}
+      <span class="vpie">${p.c ? `<span class="vcumple">Candidato</span>` : ""}${cuota(p)}</span>
       <span class="vflecha" aria-hidden="true">›</span>
     </button>`;
-  return `<div class="titulo-seccion"><h2>En vivo</h2><small>${vivos.length} partidos${cumplen ? ` · ${cumplen} candidato${cumplen === 1 ? "" : "s"}` : ""} · ${w.ts ? hace(w.ts) : ""}</small></div>
-    <div class="tarjeta lista-vivo">${vivos.map(fila).join("")}</div>
-    <p class="nota explica">Toca un partido para ver goles, tarjetas y estadísticas. ★ = favorito. "Candidato" = el favorito va perdiendo y lo estamos midiendo, pero todavía no cumple todo. No es señal para entrar: solo cuenta cuando llega la alerta.</p>`;
+  return `<div class="titulo-seccion"><h2>En vivo</h2><small>${w.ts ? hace(w.ts) : ""}</small></div>
+    <div class="buscar-vivo"><input type="search" id="buscar-vivo" placeholder="Buscar equipo, liga o país" autocomplete="off" enterkeyhint="search" value="${esc(busquedaVivo)}" aria-label="Buscar partido en vivo"></div>
+    <div class="filtros" role="group" aria-label="Qué partidos ver">
+      <button type="button" class="filtro" data-vv="perdiendo">Favoritos perdiendo · ${nPerd}</button>
+      <button type="button" class="filtro" data-vv="todos">Todos en vivo · ${vivos.length}</button>
+    </div>
+    <div class="tarjeta lista-vivo" id="lista-vivo">${vivos.map(fila).join("")}</div>
+    <div class="tarjeta vacio" id="vivo-vacio" style="padding:16px" hidden></div>
+    <p class="nota explica">Toca un partido para ver cuotas, presión, goles y estadísticas. ★ = favorito. O1.5 = cuota de "un gol más" en BetPlay/Rushbet. "Candidato" = el favorito va perdiendo y lo estamos midiendo, pero todavía no cumple todo. No es señal para entrar: solo cuenta cuando llega la alerta.</p>`;
+}
+// "COLOMBIA: Primera A - Clausura" → "Primera A" (el país ya va aparte)
+const ligaCortaTxt = (l) => String(l ?? "").replace(/^[^:]*:\s*/, "").split(" - ")[0];
+
+// Aplica vista + búsqueda sobre las filas ya pintadas (sin volver a pedir nada)
+function filtrarVivo() {
+  const lista = $("#lista-vivo");
+  if (!lista) return;
+  const q = sinTildes(busquedaVivo.trim());
+  let visibles = 0;
+  lista.querySelectorAll(".vfila").forEach((f) => {
+    const ok = q ? f.dataset.q.includes(q) : vistaVivo === "todos" || f.dataset.perd === "1";
+    f.hidden = !ok;
+    if (ok) visibles++;
+  });
+  lista.hidden = !visibles;
+  document.querySelectorAll(".filtro[data-vv]").forEach((b) => b.classList.toggle("on", !q && b.dataset.vv === vistaVivo));
+  const vacio = $("#vivo-vacio");
+  vacio.hidden = !!visibles;
+  vacio.innerHTML = q ? `Ningún partido en vivo coincide con "${esc(busquedaVivo.trim())}".`
+    : `Ningún favorito va perdiendo ahora. <button type="button" class="btn-texto" data-vv="todos">Ver todos en vivo</button>`;
+  vacio.querySelector("[data-vv]")?.addEventListener("click", () => cambiarVista("todos"));
+}
+function cambiarVista(v) {
+  vistaVivo = v;
+  try { localStorage.setItem("vistaVivo", v); } catch (_) {}
+  busquedaVivo = "";
+  const i = $("#buscar-vivo");
+  if (i) i.value = "";
+  filtrarVivo();
+}
+function enlazarVivo() {
+  document.querySelectorAll(".filtro[data-vv]").forEach((b) => b.addEventListener("click", () => cambiarVista(b.dataset.vv)));
+  $("#buscar-vivo")?.addEventListener("input", (e) => { busquedaVivo = e.target.value; filtrarVivo(); });
+  filtrarVivo();
 }
 
 // ---------- Ficha del partido: tocar una alerta o una fila en vivo (15 nov) ----------
@@ -343,9 +401,61 @@ function cuerpoFicha(d, previo) {
   const bloqueSt = st.length ? `<div class="tarjeta st-lista">${st.map(barra).join("")}</div>`
     : `<div class="tarjeta vacio" style="padding:14px">Este partido no tiene estadísticas disponibles.</div>`;
   return `${cab}
+    ${bloqueCuotas(d, gl, gv)}
+    ${bloquePresion(d.presion, fav, local, visitante, min)}
     <h3 class="ficha-t">Goles y tarjetas</h3>${bloqueInc}
     <h3 class="ficha-t">Estadísticas</h3>
     ${st.length ? `<div class="st-equipos"><span>${esc(local)}</span><span>${esc(visitante)}</span></div>` : ""}${bloqueSt}`;
+}
+
+// Cuotas de BetPlay y Rushbet (20 nov, Fredy): arriba de todo, la de "un gol más" (Over goles + 0,5) en
+// grande con su probabilidad implícita, y debajo la escalera completa de Over por casa. Nunca Wplay/Betano/Stake.
+function bloqueCuotas(d, gl, gv) {
+  const cs = (d.cuotas || []).filter((c) => c.goles && Object.keys(c.goles).length);
+  const titulo = `<h3 class="ficha-t">Cuotas ahora · BetPlay y Rushbet</h3>`;
+  if (!cs.length) return `${titulo}<div class="tarjeta vacio" style="padding:14px">${(d.cuotas || []).length
+    ? "BetPlay y Rushbet tienen el partido, pero sin mercado de goles abierto ahora." : "BetPlay y Rushbet no tienen este partido en vivo (o aún no llega la primera lectura)."}</div>`;
+  const total = (gl ?? 0) + (gv ?? 0), linea = String(total + 0.5);
+  const viejas = cs.filter((c) => c.gl != null && c.gl + c.gv !== total);
+  const lineas = [...new Set(cs.flatMap((c) => Object.keys(c.goles)))].map(Number).filter((l) => l > total).sort((a, b) => a - b);
+  const principal = cs.filter((c) => !viejas.includes(c) && c.goles[linea] > 1);
+  const mejor = principal.length ? Math.max(...principal.map((c) => Number(c.goles[linea]))) : null;
+  const ult = cs.reduce((x, y) => (new Date(y.ts) > new Date(x.ts) ? y : x));
+  return `${titulo}<div class="tarjeta cuotas-ficha">
+    <div class="cf-top"><div><span>Un gol más · Over ${n(Number(linea), 1)}</span>
+      ${mejor ? `<small>Prob. implícita ${Math.round(100 / mejor)} %</small>` : `<small>Sin esta línea ahora</small>`}</div>
+      <div class="cf-casas">${principal.map((c) => `<div class="${Number(c.goles[linea]) === mejor ? "mejor" : ""}"><small>${esc(c.casa)}</small><b class="num">${n(c.goles[linea])}</b></div>`).join("") || `<b class="num tenue">–</b>`}</div></div>
+    ${lineas.length > 1 ? `<table class="cf-tabla"><thead><tr><th>Over</th>${cs.map((c) => `<th>${esc(c.casa)}</th>`).join("")}</tr></thead><tbody>
+      ${lineas.map((l) => `<tr class="${String(l) === linea ? "on" : ""}"><td>${n(l, 1)}</td>${cs.map((c) => `<td class="num">${n(c.goles[String(l)])}</td>`).join("")}</tr>`).join("")}
+    </tbody></table>` : ""}
+    <p class="cf-pie">${viejas.length ? "⚠ Una lectura es de antes del último gol. " : ""}Lectura ${hace(ult.ts)}${ult.minuto != null ? ` · al ${esc(ult.minuto)}'` : ""}</p>
+  </div>`;
+}
+
+// Presión (20 nov, Fredy): la misma barra IP, dominancia y momentum de Control → En vivo, calculadas con la
+// fórmula del escáner. Verde = pasa el umbral de la regla; gris = no. Solo para administradores: a los amigos
+// no se les muestran índices internos (poka-yoke, 15 nov), para que no entren antes de la alerta.
+function bloquePresion(pr, fav, local, visitante, min) {
+  if (!esAdmin()) return "";
+  const titulo = `<h3 class="ficha-t">Presión · análisis técnico</h3>`;
+  if (!pr) return `${titulo}<div class="tarjeta vacio" style="padding:14px">Sin estadísticas en vivo: no se puede medir la presión.</div>`;
+  const u = Number(pr.umbral) || 1.3;
+  const cls = (v) => (v == null ? "no" : v >= u ? "ok" : "no");
+  const notaMom = pr.momentum == null
+    ? (fav ? "Momentum: necesita una foto de estadísticas de hace 8+ min; el radar las toma desde que el favorito empieza a perder (si la cuota del favorito entra en la regla)." : "Sin favorito claro: no hay dominancia ni momentum.")
+    : `Momentum medido desde el ${esc(pr.momentum_desde)}'.`;
+  const serie = (pr.serie || []).map((x) => ({ ...x, dominancia: x.dominancia == null ? null : Number(x.dominancia) }));
+  return `${titulo}<div class="tarjeta presion-ficha">
+    <div class="pf-eq"><span>${esc(local)}${fav === "home" ? " ★" : ""}</span><span>${fav === "away" ? "★ " : ""}${esc(visitante)}</span></div>
+    ${balanza(pr.ip_local, pr.ip_visitante, local, visitante)}
+    <div class="metricas">
+      <div class="metrica ${cls(pr.dominancia)}"><span>Dominancia</span><b>${n(pr.dominancia)}</b></div>
+      <div class="metrica ${cls(pr.momentum)}"><span>Momentum</span><b>${n(pr.momentum)}</b></div>
+      <div class="metrica"><span>Umbral</span><b>${n(u)}</b></div>
+    </div>
+    ${serie.length >= 2 ? spark(serie, u) : ""}
+    <p class="nota">${notaMom}${pr.fuente === "guardado" ? ` Valores del último snapshot del escáner (${esc(pr.minuto)}').` : ""}</p>
+  </div>`;
 }
 
 function hojaFicha(id, previo) {
@@ -401,7 +511,7 @@ Object.assign(pantallas, {
     const abiertas = lista.filter((a) => a.resultado === "pendiente");
     const hoyStr = new Date().toDateString();
     const m = metricas(lista.filter((a) => new Date(a.ts).toDateString() === hoyStr));
-    setTimeout(() => { enlazarBotones(abiertas); enlazarFichas(abiertas, w); $("#btn-push")?.addEventListener("click", activarPush); });
+    setTimeout(() => { enlazarBotones(abiertas); enlazarFichas(abiertas, w); enlazarVivo(); $("#btn-push")?.addEventListener("click", activarPush); });
     const avisoPush = push.puede ? `<div class="tarjeta aviso-push"><p><b>Activa los avisos</b> para que te lleguen las alertas aunque tengas la app cerrada.</p><button class="btn" id="btn-push">Activar avisos</button></div>`
       : !push.activa ? `<div class="tarjeta aviso-push"><p>${esc(push.texto)}</p></div>` : "";
     return `${YO ? `<p class="saludo">Hola, ${esc(YO.nombre.split(" ")[0])}</p>` : ""}
@@ -1019,7 +1129,7 @@ async function arrancar(despuesDeEntrar = false) {
     // Refresco automático solo en pantallas de lectura y con la app visible (no gasta batería en segundo plano)
     setInterval(() => {
       const tab = location.hash.replace("#", "") || "ahora";
-      if (!document.hidden && ["ahora", "historial", "vivo", "radar", "alertas"].includes(tab) && !document.querySelector(".hoja-fondo, .tutorial")) navegar(true);
+      if (!document.hidden && ["ahora", "historial", "vivo", "radar", "alertas"].includes(tab) && !document.querySelector(".hoja-fondo, .tutorial") && document.activeElement?.id !== "buscar-vivo") navegar(true);
     }, REFRESCO_MS);
     document.addEventListener("visibilitychange", () => {
       // No repintar si hay cuotas de córners a medio escribir (Fredy va a su casa de apuestas y vuelve)

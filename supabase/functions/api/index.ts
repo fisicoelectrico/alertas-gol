@@ -45,6 +45,7 @@ import { notificar } from "../_shared/notificar.ts";
 import { canjear, enlaceNuevo, leerSesion, modoAcceso, normalizarTelefono, Sesion, sha256, tokenNuevo } from "../_shared/acceso.ts";
 import { estadoPresupuesto } from "../_shared/apifootball.ts";
 import * as FS from "../_shared/flashscore.ts";
+import * as A from "../_shared/algoritmo.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -195,7 +196,7 @@ async function widget() {
     select fixture_id from futbol.partidos where seguimiento
     union select fixture_id from futbol.alertas where resultado = 'pendiente'`).map((r: any) => String(r.fixture_id)));
   const partidos = (u.radar ?? []).map((p: any) => ({
-    id: p.id, e: p.e, m: p.m, l: p.l, v: p.v, gl: p.gl, gv: p.gv, fav: p.fav, liga: p.liga, c: segs.has(String(p.id)),
+    id: p.id, e: p.e, m: p.m, l: p.l, v: p.v, gl: p.gl, gv: p.gv, fav: p.fav, liga: p.liga, pais: p.pais ?? null, c: segs.has(String(p.id)),
   })).sort((a: any, b: any) => Number(b.c) - Number(a.c) || (b.m ?? -1) - (a.m ?? -1));
   // vivos se cuenta sobre la lista ya filtrada (el conteo guardado incluye todas las ligas)
   const vivos = partidos.filter((p: any) => ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(p.e)).length;
@@ -204,6 +205,21 @@ async function widget() {
   const perdiendo = partidos.filter((p: any) => ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(p.e) &&
     ((p.fav === "home" && p.gl < p.gv) || (p.fav === "away" && p.gv < p.gl)))
     .map((p: any) => ({ ...p, liga: ligaCorta(p.liga) }));
+  // Cuota "un gol más" (Over goles + 0,5) de BetPlay/Rushbet por partido, para la lista de Ahora (20 nov).
+  // Solo lecturas de ≤ 5 min con el MISMO marcador (si hubo gol después, esa escalera ya no sirve).
+  try {
+    const ks = await sql`select distinct on (fixture_id, casa) fixture_id, casa, goles_local, goles_visitante, goles
+                         from futbol.cuotas_casa where ts > now() - interval '5 minutes' order by fixture_id, casa, ts desc`;
+    const porId = new Map<string, any[]>();
+    for (const k of ks) porId.set(String(k.fixture_id), [...(porId.get(String(k.fixture_id)) ?? []), k]);
+    for (const p of partidos) {
+      const linea = (p.gl ?? 0) + (p.gv ?? 0) + 0.5, clave = String(linea);
+      const casas = (porId.get(String(p.id)) ?? []).filter((k: any) => k.goles_local === p.gl && k.goles_visitante === p.gv)
+        .map((k: any) => ({ casa: k.casa === "betplay" ? "BetPlay" : "Rushbet", c: Number(k.goles?.[clave]) }))
+        .filter((x: any) => x.c > 1);
+      if (casas.length) p.k = { linea, casas };
+    }
+  } catch (_e) { /* sin tabla de Kambi: la lista sale sin cuotas */ }
   return { ts: u.ts, vivos, candidatos: partidos.filter((p: any) => p.c).length, partidos, perdiendo, casas: await casasKambi() };
 }
 
@@ -839,13 +855,14 @@ async function fichaPartido(idPedido: string, conCrudo: boolean) {
   if (c && Date.now() - c.t < 45000 && !conCrudo) return c.d;
 
   let stats: ReturnType<typeof statsEnEspañol> = [];
+  let filasFS: [string, string, string][] = [];
   let incid: FS.IncidenciaFS[] = [];
   let crudo: string | null = null;
   let fuente = "flashscore";
   const errores: string[] = [];
   if (fsId) {
     const [st, inc] = await Promise.allSettled([FS.estadisticasTodas(fsId), FS.incidencias(fsId)]);
-    if (st.status === "fulfilled") stats = statsEnEspañol(st.value); else errores.push(String(st.reason?.message ?? st.reason));
+    if (st.status === "fulfilled") { filasFS = st.value; stats = statsEnEspañol(st.value); } else errores.push(String(st.reason?.message ?? st.reason));
     if (inc.status === "fulfilled") { incid = inc.value.lista; crudo = inc.value.crudo; } else errores.push(String(inc.reason?.message ?? inc.reason));
   }
   // Respaldo sin Flashscore: lo último guardado por el escáner (solo partidos en seguimiento)
@@ -876,10 +893,77 @@ async function fichaPartido(idPedido: string, conCrudo: boolean) {
     estadisticas: stats, fuente: stats.length ? fuente : null, ts: new Date().toISOString(),
   };
   if (errores.length) d.errores = errores;
+  // Cuotas y presión arriba de la ficha (Fredy, 20 nov): lo que se mira antes que las estadísticas.
+  try { d.cuotas = await cuotasFicha(fixtureId, fsId); } catch (e) { d.cuotas = []; errores.push(`cuotas: ${(e as Error).message}`); }
+  try { d.presion = await presionFicha(fixtureId, filasFS, d.favorito, d.minuto); } catch (e) { d.presion = null; errores.push(`presion: ${(e as Error).message}`); }
+  if (errores.length) d.errores = errores;
   if (conCrudo) { d.crudo_incidencias = crudo; d.incidencias_todas = incid; }
   cacheFicha.set(clave, { t: Date.now(), d });
   if (cacheFicha.size > 200) cacheFicha.delete(cacheFicha.keys().next().value!);
   return d;
+}
+
+// Cuotas de BetPlay y Rushbet (Kambi) para la ficha: la última lectura de cada casa (≤ 10 min), con la
+// escalera de Over de goles. Solo estas dos casas: Wplay/Betano/Stake no le sirven a Fredy (DECISIONES 58).
+// Sale de futbol.cuotas_casa, que llena el cron futbol-kambi: 0 consultas de API-Football.
+async function cuotasFicha(fixtureId: number | null, fsId: string | null) {
+  if (!fixtureId && !fsId) return [];
+  const filas = await sql`
+    select distinct on (casa) casa, ts, minuto, goles_local, goles_visitante, goles
+    from futbol.cuotas_casa
+    where (fixture_id = ${fixtureId} or fs_id = ${fsId}) and ts > now() - interval '10 minutes'
+    order by casa, ts desc`;
+  return filas.map((f: any) => ({ casa: f.casa === "betplay" ? "BetPlay" : "Rushbet", ts: f.ts, minuto: f.minuto,
+    gl: f.goles_local, gv: f.goles_visitante, goles: f.goles ?? {} }));
+}
+
+// Presión del partido para la ficha, con la MISMA fórmula del escáner (algoritmo.ts): IP de cada equipo,
+// dominancia (IP fav ÷ IP rival) y momentum (lo mismo pero solo con lo que pasó desde una foto de hace
+// ~ventana min). Se calcula al vuelo con las estadísticas de Flashscore que la ficha ya leyó, así sale
+// también en el 1.er tiempo o en partidos que el escáner no sigue. El momentum necesita una foto vieja
+// (snapshots o historial_stats): si el escáner nunca fotografió el partido, queda null y se dice por qué.
+async function presionFicha(fixtureId: number | null, filasFS: [string, string, string][], fav: string | null, minuto: number | null) {
+  const cfg = await leerConfig();
+  const pesos = cfg.pesos_ip as A.Pesos;
+  const umbral = Number(cfg.dominancia_min ?? 1.3);
+  const serie = fixtureId ? await sql`
+    select minuto, ip_local, ip_visitante, dominancia, momentum from (
+      select ts, minuto, ip_local, ip_visitante, dominancia, momentum from futbol.snapshots
+      where fixture_id = ${fixtureId} and ip_local is not null order by ts desc limit 15) s order by ts` : [];
+  const f = FS.formatoApi(filasFS);
+  if (!f.local.length || !pesos) {
+    // Sin estadísticas en vivo: lo último que guardó el escáner, si existe
+    const u = serie[serie.length - 1];
+    return u ? { ip_local: Number(u.ip_local), ip_visitante: Number(u.ip_visitante), dominancia: u.dominancia == null ? null : Number(u.dominancia),
+                 momentum: u.momentum == null ? null : Number(u.momentum), umbral, minuto: u.minuto, fuente: "guardado", serie } : null;
+  }
+  const sL = A.normalizarStats(f.local), sV = A.normalizarStats(f.visitante);
+  const usarXg = sL.xg !== null && sV.xg !== null;
+  const ipL = A.indicePresion(sL, pesos, usarXg), ipV = A.indicePresion(sV, pesos, usarXg);
+  const lado = fav === "home" || fav === "away" ? fav : null;
+  const dominancia = lado ? (lado === "home" ? A.razon(ipL, ipV) : A.razon(ipV, ipL)) : null;
+  let momentum: number | null = null, momentoDesde: number | null = null;
+  const gap = Number(cfg.momentum_gap_min ?? 8), ventana = Number(cfg.momentum_ventana_min ?? 10);
+  if (lado && fixtureId && minuto != null) {
+    const [prev] = await sql`
+      select minuto, stats_local, stats_visitante from (
+        select minuto, stats_local, stats_visitante, 'snapshot' as fuente from futbol.snapshots
+        where fixture_id = ${fixtureId} and stats_local is not null
+        union all
+        select minuto, stats_local, stats_visitante, 'historial' from futbol.historial_stats where fixture_id = ${fixtureId}
+      ) x where minuto <= ${minuto - gap}::int
+      order by abs(minuto - ${minuto - ventana}::int), (fuente = 'snapshot') desc limit 1`;
+    if (prev) {
+      const dL = A.deltaStats(sL, prev.stats_local), dV = A.deltaStats(sV, prev.stats_visitante);
+      const xgD = dL.xg !== null && dV.xg !== null;
+      const mL = A.indicePresion(dL, pesos, xgD), mV = A.indicePresion(dV, pesos, xgD);
+      momentum = lado === "home" ? A.razon(mL, mV) : A.razon(mV, mL);
+      momentoDesde = prev.minuto;
+    }
+  }
+  const r2 = (x: number | null) => x == null ? null : Math.round(x * 100) / 100;
+  return { ip_local: r2(ipL), ip_visitante: r2(ipV), dominancia: r2(dominancia), momentum: r2(momentum), momentum_desde: momentoDesde,
+           umbral, minuto, fuente: "vivo", serie };
 }
 
 // Rutas que funcionan siempre sin sesión

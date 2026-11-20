@@ -324,6 +324,18 @@ export async function estadisticasTodas(id: string): Promise<[string, string, st
   return out;
 }
 
+/** Filas de estadisticasTodas → forma de API-Football por equipo (para A.normalizarStats en la ficha). */
+export function formatoApi(filas: [string, string, string][]): { local: any[]; visitante: any[] } {
+  const local: any[] = [], visitante: any[] = [];
+  for (const [n, l, v] of filas) {
+    const tipo = NOMBRES[n.toLowerCase()];
+    if (!tipo) continue;
+    local.push({ type: tipo, value: l || null });
+    visitante.push({ type: tipo, value: v || null });
+  }
+  return { local, visitante };
+}
+
 export interface IncidenciaFS {
   minuto: string;                 // "23'", "45+2'"
   lado: "local" | "visitante" | null;
