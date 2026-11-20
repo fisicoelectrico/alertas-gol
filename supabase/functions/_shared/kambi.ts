@@ -40,8 +40,8 @@ interface EventoKambi {
 
 export interface OfertaCasa {
   /** ofrece = alguna casa tiene la línea · sin_linea = tienen el mercado, no esa línea · sin_mercado · sin_partido
-   *  (ninguna casa tiene el partido en vivo) · kambi_caido (no respondió) · apagado (kambi_activo = false) */
-  estado: "ofrece" | "sin_linea" | "sin_mercado" | "sin_partido" | "kambi_caido" | "apagado";
+   *  (ninguna casa tiene el partido en vivo) · sin_lectura (lo tienen, pero aún no hay cuotas leídas) · kambi_caido (no respondió) · apagado (kambi_activo = false) */
+  estado: "ofrece" | "sin_linea" | "sin_mercado" | "sin_partido" | "sin_lectura" | "kambi_caido" | "apagado";
   casas: { casa: string; c: number }[];                       // la línea pedida, de mayor a menor
   cercana: { linea: number; casas: { casa: string; c: number }[] } | null;   // si no está, la más cercana por encima
 }
@@ -55,28 +55,15 @@ export interface Kambi {
   oferta(fsId: string, tipo: TipoCuota, linea: number, opts?: { goles?: number }): Promise<OfertaCasa>;
 }
 
-// Por dónde se pide (DECISIONES 55): Kambi le responde 410 a las Edge Functions, pero el mismo pedido hecho
-// desde la base con pg_net responde 200. "db" encola el GET en la base (futbol.kambi_get, solo *.kambicdn.com)
-// y espera la respuesta hasta 12 s; "fetch" lo hace desde la función.
-let via = "db";
+// Por dónde se pide. Kambi le responde 410 a las Edge Functions (DECISIONES 55) y un GET encolado en pg_net
+// desde el escáner espera a que el escáner termine (DECISIONES 56). Por eso, con kambi_via = "cola" (por
+// defecto), un cron de la base (futbol.kambi_encolar, cada minuto) hace los pedidos y aquí solo se leen las
+// respuestas que ya llegaron. "fetch" pide directo desde la función (por si Kambi vuelve a responderle).
+let via = "cola";
 async function pedir(url: string): Promise<any> {
-  if (via === "fetch") {
-    const r = await fetch(url, { headers: { "User-Agent": UA, "Accept": "application/json" }, signal: AbortSignal.timeout(10000) });
-    if (!r.ok) throw new Error(`kambi ${r.status}`);
-    return await r.json();
-  }
-  const [{ ids }] = await sql`select futbol.kambi_get(array[${url}]::text[]) as ids`;
-  const id = Number(ids[0]);
-  const fin = Date.now() + 12000;
-  while (Date.now() < fin) {
-    await new Promise((r) => setTimeout(r, 400));
-    const [r] = await sql`select status_code, content, error_msg from futbol.kambi_respuestas(array[${id}]::bigint[])`;
-    if (!r) continue;
-    if (r.error_msg || !r.status_code) throw new Error(`kambi db: ${r.error_msg ?? "sin respuesta"}`);
-    if (r.status_code !== 200) throw new Error(`kambi ${r.status_code}`);
-    return JSON.parse(r.content);
-  }
-  throw new Error("kambi db: tiempo agotado");
+  const r = await fetch(url, { headers: { "User-Agent": UA, "Accept": "application/json" }, signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw new Error(`kambi ${r.status}`);
+  return await r.json();
 }
 
 function esEsports(e: any): boolean {
@@ -85,7 +72,9 @@ function esEsports(e: any): boolean {
 }
 
 async function listaVivo(servidor: string, casa: string, codigo: string): Promise<EventoKambi[]> {
-  const j = await pedir(`https://${servidor}/offering/v2018/${codigo}/listView/football/all/all/all/in-play.json?${PARAMS}&useCombined=true`);
+  return parseLista(await pedir(`https://${servidor}/offering/v2018/${codigo}/listView/football/all/all/all/in-play.json?${PARAMS}&useCombined=true`), casa, codigo);
+}
+function parseLista(j: any, casa: string, codigo: string): EventoKambi[] {
   const out: EventoKambi[] = [];
   for (const x of j?.events ?? []) {
     const e = x.event ?? {}, live = x.liveData ?? {};
@@ -105,7 +94,9 @@ async function listaVivo(servidor: string, casa: string, codigo: string): Promis
 
 /** Cuotas de un partido: escaleras de Over por tipo y los mercados de goles y córners compactos. */
 async function cuotasEvento(servidor: string, codigo: string, id: number) {
-  const j = await pedir(`https://${servidor}/offering/v2018/${codigo}/betoffer/event/${id}.json?${PARAMS}&includeParticipants=true`);
+  return parseEvento(await pedir(`https://${servidor}/offering/v2018/${codigo}/betoffer/event/${id}.json?${PARAMS}&includeParticipants=true`));
+}
+function parseEvento(j: any) {
   const esc: Record<TipoCuota, Record<string, number>> = { goles: {}, goles_1t: {}, corners: {}, corners_1t: {} };
   const mercados: any[] = [];
   for (const bo of j?.betOffers ?? []) {
@@ -128,7 +119,15 @@ async function cuotasEvento(servidor: string, codigo: string, id: number) {
 /** Lee las cuotas de un partido en una casa y guarda la fila. Devuelve la fila guardada (o null si falló). */
 async function leerYGuardar(servidor: string, e: EventoKambi, fsId: string, fixtureId: number | null, log: Log) {
   try {
-    const { esc, mercados } = await cuotasEvento(servidor, e.codigo, e.id);
+    return await guardar(e, fsId, fixtureId, await cuotasEvento(servidor, e.codigo, e.id));
+  } catch (err) {
+    log(`kambi: ${e.casa} ${e.local}-${e.visitante}: ${(err as Error).message}`);
+    return null;
+  }
+}
+async function guardar(e: EventoKambi, fsId: string | null, fixtureId: number | null, c: ReturnType<typeof parseEvento>) {
+  {
+    const { esc, mercados } = c;
     const vacio = (o: Record<string, number>) => Object.keys(o).length ? sql.json(o) : null;
     const [r] = await sql`
       insert into futbol.cuotas_casa (casa, evento_id, fs_id, fixture_id, liga, local, visitante, periodo, minuto,
@@ -138,9 +137,6 @@ async function leerYGuardar(servidor: string, e: EventoKambi, fsId: string, fixt
         ${sql.json(mercados)})
       returning casa, ts, goles_local, goles_visitante, goles, goles_1t, corners, corners_1t`;
     return r;
-  } catch (err) {
-    log(`kambi: ${e.casa} ${e.local}-${e.visitante}: ${(err as Error).message}`);
-    return null;
   }
 }
 
@@ -161,7 +157,7 @@ export async function cicloKambi(args: {
 }): Promise<Kambi> {
   const { cfg, vivosFS, fixtureDe, prioridad, log } = args;
   const activo = cfg.kambi_activo !== false;
-  via = String(cfg.kambi_via ?? "db") === "fetch" ? "fetch" : "db";
+  via = String(cfg.kambi_via ?? "cola") === "fetch" ? "fetch" : "cola";
   const servidor = String(cfg.kambi_servidor ?? "us.offering-api.kambicdn.com");
   const casas: Record<string, string> = (cfg.kambi_casas && typeof cfg.kambi_casas === "object")
     ? cfg.kambi_casas as Record<string, string> : { betplay: "betplay", rushbet: "rsico" };
@@ -177,7 +173,16 @@ export async function cicloKambi(args: {
     const porFs = new Map(enVivo.map((p) => [p.id, p]));
     await Promise.all(Object.entries(casas).filter(([casa]) => NOMBRE_CASA[casa]).map(async ([casa, codigo]) => {
       let lista: EventoKambi[];
-      try { lista = await listaVivo(servidor, casa, codigo); }
+      try {
+        if (via === "fetch") lista = await listaVivo(servidor, casa, codigo);
+        else {
+          // La lista más nueva que trajo el cron (máximo 3 min)
+          const [r] = await sql`select ts, status_code, content from futbol.kambi_listas(3) where casa = ${casa}`;
+          if (!r) throw new Error("sin lista reciente en la cola");
+          if (r.status_code !== 200) throw new Error(`kambi ${r.status_code}`);
+          lista = parseLista(JSON.parse(r.content), casa, codigo);
+        }
+      }
       catch (e) { log(`kambi: lista ${casa}: ${(e as Error).message}`); resumen[casa] = { error: (e as Error).message }; return; }
       ok = true;
       const porId = new Map(lista.map((e) => [e.id, e]));
@@ -189,6 +194,33 @@ export async function cicloKambi(args: {
       // Qué leer: prioridad (candidatos, gol temprano) primero; luego las franjas de córners
       const quiere = [...pares.keys()].filter((fs) => prioridad.has(fs) || (porFs.get(fs) && franjaCorners(porFs.get(fs)!)))
         .sort((a, b) => Number(prioridad.has(b)) - Number(prioridad.has(a)));
+      if (via === "cola") {
+        // 1. Guardar las cuotas que trajo el cron desde el ciclo anterior (la más nueva de cada partido)
+        let guardadas = 0;
+        for (const r of await sql`select * from futbol.kambi_eventos() where casa = ${casa}`) {
+          try {
+            if (r.status_code !== 200) continue;
+            const e = porId.get(Number(r.evento_id));   // minuto, marcador y córners de la lista actual
+            if (!e) continue;                          // ya no está en vivo
+            const fs = [...pares.entries()].find(([, v]) => v.fixture_id === e.id)?.[0] ?? r.fs_id;
+            if (await guardar(e, fs, fs ? fixtureDe(fs) ?? r.fixture_id : r.fixture_id, parseEvento(JSON.parse(r.content)))) guardadas++;
+          } catch (err) { log(`kambi: evento ${casa} ${r.evento_id}: ${(err as Error).message}`); }
+          finally {
+            await sql`update futbol.kambi_pedidos set procesado = true
+                      where casa = ${casa} and evento_id = ${r.evento_id} and not procesado and ts <= ${r.ts}`;
+          }
+        }
+        // 2. Pedirle al cron los partidos que importan durante los próximos 6 min
+        const pedir = quiere.slice(0, maxEv);
+        for (const fs of pedir) {
+          const e = pareja.get(fs)!.find((x) => x.casa === casa)!;
+          await sql`insert into futbol.kambi_quiero (casa, evento_id, fs_id, fixture_id, hasta)
+                    values (${casa}, ${e.id}, ${fs}, ${fixtureDe(fs)}, now() + interval '6 minutes')
+                    on conflict (casa, evento_id) do update set hasta = excluded.hasta, fs_id = excluded.fs_id, fixture_id = excluded.fixture_id`;
+        }
+        resumen[casa] = { en_vivo: lista.length, emparejados: pares.size, guardadas, pedidos: pedir.length };
+        return;
+      }
       const recientes = quiere.length ? new Set((await sql`select distinct fs_id from futbol.cuotas_casa
           where casa = ${casa} and fs_id = any(${quiere}::text[])
             and ts > now() - make_interval(secs => ${intervalo * 60 - 30}::float8)`).map((r: any) => r.fs_id)) : new Set();
@@ -223,7 +255,7 @@ export async function cicloKambi(args: {
     // Falta alguna casa (o la lectura es vieja / de otro marcador): se pide ahora
     const tienen = new Set(filas.map((f: any) => f.casa));
     const faltan = evs.filter((e) => !tienen.has(e.casa));
-    if (faltan.length) {
+    if (faltan.length && via === "fetch") {
       await Promise.all(faltan.map((e) => leerYGuardar(servidor, e, fsId, fixtureDe(fsId), log)));
       filas = await frescas();
     }
@@ -231,6 +263,7 @@ export async function cicloKambi(args: {
     const otras = new Map<number, { casa: string; c: number }[]>();
     let conMercado = false;
     const k = claveLinea(linea);
+    if (!filas.length) return vacia("sin_lectura");   // emparejado, pero el cron todavía no trajo sus cuotas
     for (const f of filas) {
       const esc = (f[tipo] ?? {}) as Record<string, number>;
       if (!Object.keys(esc).length) continue;
@@ -259,6 +292,7 @@ export const casasJson = (o: OfertaCasa) => Object.fromEntries(o.casas.map((x) =
 export function pasaPush(cfg: Config, o: OfertaCasa, esGoles: boolean): { sale: boolean; motivo: string | null } {
   if (cfg.kambi_exigir === false || o.estado === "apagado") return { sale: true, motivo: null };
   if (o.estado === "ofrece") return { sale: true, motivo: null };
-  if (o.estado === "kambi_caido" && esGoles && cfg.kambi_caido_avisa !== false) return { sale: true, motivo: "kambi_caido" };
+  // Sin saber (Kambi caído o el partido recién entró a la cola): las de goles salen igual, con el motivo
+  if ((o.estado === "kambi_caido" || o.estado === "sin_lectura") && esGoles && cfg.kambi_caido_avisa !== false) return { sale: true, motivo: o.estado };
   return { sale: false, motivo: o.estado === "kambi_caido" ? "kambi_caido" : `casas_${o.estado}` };
 }

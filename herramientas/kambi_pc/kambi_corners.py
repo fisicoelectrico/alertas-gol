@@ -98,6 +98,24 @@ def mercados_corners(codigo, evento_id):
     return out
 
 
+def overs(f, nombre):
+    """'más de 1.5=1.42 · 2.5=2.10' del mercado con ese nombre exacto, o None."""
+    for m in f["mercados"]:
+        if m["nombre"] == nombre:
+            xs = [f"{l['linea']}={l['cuota']}" for l in m["lineas"] if str(l["lado"]).lower() == "over" and l["linea"] is not None]
+            return " · ".join(xs[:4]) or None
+    return None
+
+
+def resumen_partido(f):
+    """Una línea por partido: liga, marcador, minuto y Over de córners del 1T (o del partido)."""
+    t1 = overs(f, "Total Corners - 1st Half")
+    tot = overs(f, "Total Corners")
+    cuotas = f"1T más de {t1}" if t1 else (f"partido más de {tot}" if tot else "sin línea Over")
+    return (f"{f['local']} {f['goles_local']}-{f['goles_visitante']} {f['visitante']} · {f['minuto']}' {f['periodo']}"
+            f" · {f['liga']} · {cuotas}")
+
+
 def vuelta(casa, codigo, maximo):
     eventos = en_vivo(codigo)
     filas = []
@@ -164,6 +182,8 @@ def main():
                         lin = ", ".join(f"{l['lado']} {l['linea']}={l['cuota']}" for l in m["lineas"][:6])
                         print(f"      {m['nombre']}: {lin}")
                 continue
+            for f in filas:   # qué partido es cada uno, con la cuota principal de córners
+                print("   " + resumen_partido(f))
             if not filas:
                 continue
             try:
