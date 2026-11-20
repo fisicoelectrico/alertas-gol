@@ -343,3 +343,16 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 **Cambio.** Si BetPlay/Rushbet ofrecen la línea pero ninguna paga el mínimo, el aviso no se guarda todavía: se vuelve a mirar en cada ciclo mientras siga la ventana (igual que con el mercado suspendido, DECISIONES 67). En el último minuto de la ventana se guarda igual, sin push, para no perder el dato del laboratorio. El motivo de una push que no salió queda en `alertas_corners.nota` (p. ej. `casas_bajo_umbral`). Llave `corners_espera_umbral` (sin fila = encendida; `false` vuelve a lo de antes).
 
 **Efecto en los datos.** El minuto y los córners guardados del aviso pasan a ser los del momento en que la cuota llega al mínimo (la entrada real), no los del primer minuto de la ventana.
+
+## 72. Córners del 2T: se vigila desde que el favorito empieza a perder (20 nov 2026, a pedido de Fredy)
+
+**Pedido.** "En los córners también se debe estar pendiente desde que empieza a perder el favorito", igual que en goles (DECISIONES 61).
+
+**Cambio.**
+- `corners_2t_min_desde` pasa de 70 a 46 (todo el 2T). Como el aviso `c2t_fav77` solo se evalúa si el favorito va perdiendo, en la práctica la ventana empieza en el minuto del gol que lo deja abajo y sigue hasta `corners_2t_min_hasta` (80). Con DECISIONES 71, la push sale en el primer minuto en que BetPlay o Rushbet paguen el mínimo (1,40) por 2 córners más.
+- Versión de córners c3 → c4 (los minutos son parte de la regla).
+- Si BetPlay/Rushbet aún no tienen lectura del partido, el aviso del 2T espera hasta el final de la ventana (antes, `kambi_espera_min` contado desde el 70').
+
+**Ojo con los datos.** El 61,8 % histórico de `c2t_fav77` se midió con entradas entre el 70' y el 80'. Una entrada al 55' a 1,40 es otra apuesta (más tiempo para 2 córners, pero la casa lo sabe y paga menos hasta que pasa un rato sin córners). Se compara por versión: c3 contra c4.
+
+**Volver atrás.** `corners_2t_min_desde = 70` desde Ajustes (sube la versión sola).
