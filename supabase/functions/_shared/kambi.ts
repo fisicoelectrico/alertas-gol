@@ -55,10 +55,28 @@ export interface Kambi {
   oferta(fsId: string, tipo: TipoCuota, linea: number, opts?: { goles?: number }): Promise<OfertaCasa>;
 }
 
+// Por dónde se pide (DECISIONES 55): Kambi le responde 410 a las Edge Functions, pero el mismo pedido hecho
+// desde la base con pg_net responde 200. "db" encola el GET en la base (futbol.kambi_get, solo *.kambicdn.com)
+// y espera la respuesta hasta 12 s; "fetch" lo hace desde la función.
+let via = "db";
 async function pedir(url: string): Promise<any> {
-  const r = await fetch(url, { headers: { "User-Agent": UA, "Accept": "application/json" }, signal: AbortSignal.timeout(10000) });
-  if (!r.ok) throw new Error(`kambi ${r.status}`);
-  return await r.json();
+  if (via === "fetch") {
+    const r = await fetch(url, { headers: { "User-Agent": UA, "Accept": "application/json" }, signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error(`kambi ${r.status}`);
+    return await r.json();
+  }
+  const [{ ids }] = await sql`select futbol.kambi_get(array[${url}]::text[]) as ids`;
+  const id = Number(ids[0]);
+  const fin = Date.now() + 12000;
+  while (Date.now() < fin) {
+    await new Promise((r) => setTimeout(r, 400));
+    const [r] = await sql`select status_code, content, error_msg from futbol.kambi_respuestas(array[${id}]::bigint[])`;
+    if (!r) continue;
+    if (r.error_msg || !r.status_code) throw new Error(`kambi db: ${r.error_msg ?? "sin respuesta"}`);
+    if (r.status_code !== 200) throw new Error(`kambi ${r.status_code}`);
+    return JSON.parse(r.content);
+  }
+  throw new Error("kambi db: tiempo agotado");
 }
 
 function esEsports(e: any): boolean {
@@ -143,6 +161,7 @@ export async function cicloKambi(args: {
 }): Promise<Kambi> {
   const { cfg, vivosFS, fixtureDe, prioridad, log } = args;
   const activo = cfg.kambi_activo !== false;
+  via = String(cfg.kambi_via ?? "db") === "fetch" ? "fetch" : "db";
   const servidor = String(cfg.kambi_servidor ?? "us.offering-api.kambicdn.com");
   const casas: Record<string, string> = (cfg.kambi_casas && typeof cfg.kambi_casas === "object")
     ? cfg.kambi_casas as Record<string, string> : { betplay: "betplay", rushbet: "rsico" };
