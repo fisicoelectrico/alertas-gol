@@ -593,6 +593,76 @@ async function cuotaCornersManual(body: any, yo: any) {
   return { ok: true, cuotas: r };
 }
 
+// ---------- Cuotas de córners de BetPlay y Rushbet desde el PC de Fredy (DECISIONES 53) ----------
+// El feed de Kambi bloquea servidores, así que lo lee un script en el PC de Fredy (herramientas/kambi_pc) y
+// lo sube aquí con el PIN. Aquí se valida, se empareja con Flashscore (fs_partidos de las últimas 4 h) y se
+// leen los córners del momento (Flashscore, gratis) de hasta 10 partidos del 1T por envío.
+const n3 = (x: unknown) => { const v = Number(x); return Number.isFinite(v) ? v : null; };
+const txt = (x: unknown, max = 120) => typeof x === "string" && x.trim() ? x.trim().slice(0, max) : null;
+async function cuotasCasa(body: any) {
+  const casa = String(body?.casa ?? "");
+  if (casa !== "betplay" && casa !== "rushbet") return { error: "casa debe ser betplay o rushbet" };
+  const crudas: any[] = Array.isArray(body?.filas) ? body.filas : [];
+  if (!crudas.length) return { ok: true, guardadas: 0 };
+  if (crudas.length > 80) return { error: "Máximo 80 partidos por envío" };
+  const filas = crudas.map((f) => ({
+    evento_id: String(f?.evento_id ?? "").slice(0, 40),
+    local: txt(f?.local), visitante: txt(f?.visitante), liga: txt(f?.liga, 200),
+    inicio: typeof f?.inicio === "string" && Number.isFinite(Date.parse(f.inicio)) ? new Date(f.inicio).toISOString() : null,
+    periodo: txt(f?.periodo, 40), minuto: n3(f?.minuto), gl: n3(f?.goles_local), gv: n3(f?.goles_visitante),
+    mercados: (Array.isArray(f?.mercados) ? f.mercados : []).slice(0, 60).map((m: any) => ({
+      nombre: txt(m?.nombre, 160) ?? "",
+      lineas: (Array.isArray(m?.lineas) ? m.lineas : []).slice(0, 40).map((l: any) => ({
+        lado: txt(l?.lado, 40), linea: n3(l?.linea), cuota: n3(l?.cuota),
+      })).filter((l: any) => l.cuota !== null && l.cuota > 1 && l.cuota < 1000),
+    })).filter((m: any) => m.nombre && m.lineas.length),
+  })).filter((f) => f.evento_id && f.local && f.visitante && f.mercados.length);
+
+  // Más de X córners en el 1T: mercado total de córners del 1T (no por equipo, no hándicap, no carreras)
+  const t1 = (f: any, linea: number) => {
+    for (const m of f.mercados) {
+      const nom = m.nombre.toLowerCase();
+      if (!/corner/.test(nom) || !/1st half|first half/.test(nom) || /team|home|away|handicap|race|first corner|last|odd|even|most/.test(nom)) continue;
+      for (const l of m.lineas) if (/^over/i.test(l.lado ?? "") && l.linea !== null && Math.abs(l.linea - linea) < 1e-6) return l.cuota;
+    }
+    return null;
+  };
+
+  // Emparejar con Flashscore por nombres y hora de inicio (misma función que usa el escáner)
+  const fsRows = await sql`select distinct on (fs_id) fs_id, local, visitante, inicio from futbol.fs_partidos
+                           where inicio between now() - interval '4 hours' and now() + interval '15 minutes'`;
+  const comoFS = fsRows.map((r: any) => ({ id: r.fs_id, local: r.local, visitante: r.visitante, inicio: new Date(r.inicio).getTime() })) as any[];
+  const conInicio = filas.map((f, i) => ({ f, i })).filter((x) => x.f.inicio);
+  const mapa = FS.emparejar(comoFS, conInicio.map((x) => ({ fixture_id: x.i, local: x.f.local!, visitante: x.f.visitante!, kickoff: Date.parse(x.f.inicio!) })));
+  const fsDe = new Map<number, string>();
+  for (const [fs, m] of mapa) fsDe.set(m.fixture_id, fs);
+
+  // Córners del momento para los del 1T emparejados (Flashscore, gratis), hasta 10 por envío
+  const ck = new Map<number, FS.CornersFS>();
+  for (const [i, f] of filas.entries()) {
+    if (ck.size >= 10) break;
+    const fs = fsDe.get(i);
+    if (!fs || !/1st|first/i.test(f.periodo ?? "")) continue;
+    try { ck.set(i, await FS.corners(fs)); } catch (_e) { /* sin córners esta vez */ }
+  }
+
+  const ins = filas.map((f, i) => {
+    const c = ck.get(i);
+    const c1 = c ? (c.t1 ?? c.partido) : null;
+    return {
+      casa, evento_id: f.evento_id, fs_id: fsDe.get(i) ?? null, liga: f.liga, local: f.local, visitante: f.visitante, inicio: f.inicio,
+      periodo: f.periodo, minuto: f.minuto, goles_local: f.gl, goles_visitante: f.gv,
+      corners_local: c?.partido?.[0] ?? null, corners_visitante: c?.partido?.[1] ?? null,
+      corners_1t_local: c1?.[0] ?? null, corners_1t_visitante: c1?.[1] ?? null,
+      t1_o05: t1(f, 0.5), t1_o15: t1(f, 1.5), t1_o25: t1(f, 2.5), t1_o35: t1(f, 3.5),
+      mercados: sql.json(f.mercados),
+    };
+  });
+  if (ins.length) await sql`insert into futbol.corners_cuotas_casa ${sql(ins as any)}`;
+  return { ok: true, guardadas: ins.length, emparejadas: fsDe.size, con_corners: ck.size,
+           con_1t: ins.filter((x) => x.t1_o05 ?? x.t1_o15 ?? x.t1_o25 ?? x.t1_o35).length };
+}
+
 // ---------- Laboratorio de goles y córners (DECISIONES 40): solo administradores ----------
 // Umbral de entrada calculado desde la base (lab_umbrales, uno por día), oportunidades con la serie de la
 // mejor cuota tras el gol, resumen de acierto y ganancia de las que superaron el umbral, y salud de Flashscore.
@@ -905,6 +975,10 @@ Deno.serve(async (req) => {
       if (ruta === "/admin/corners") return json(await cornersLab());
       if (ruta === "/admin/corners-cuota") {
         const r = await cuotaCornersManual(body, yo);
+        return json(r, (r as any).error ? 400 : 200);
+      }
+      if (ruta === "/admin/corners-casa") {
+        const r = await cuotasCasa(body);
         return json(r, (r as any).error ? 400 : 200);
       }
       if (ruta === "/admin/laboratorio") return json(await laboratorio());
