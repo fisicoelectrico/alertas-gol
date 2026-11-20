@@ -18,6 +18,7 @@
 // =====================================================================
 import { sql, Config } from "./db.ts";
 import { lineasEntrada, notificar } from "./notificar.ts";
+import { Kambi, OfertaCasa, casasJson, pasaPush } from "./kambi.ts";
 
 type Log = (s: string) => void;
 export const NOMBRE_LAB: Record<string, { titulo: string; linea: number; texto: string }> = {
@@ -61,8 +62,8 @@ export async function umbrales(log: Log): Promise<Map<string, any>> {
  * Un ciclo del laboratorio. `vivos` = partidos en forma API-Football con `__fs` (ya fotografiados en
  * este ciclo por cicloCuotasVivo). `habilitada(id)` dice si la liga está encendida.
  */
-export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (id: number) => boolean; log: Log }) {
-  const { cfg, vivos, habilitada, log } = opts;
+export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (id: number) => boolean; log: Log; kambi?: Kambi | null }) {
+  const { cfg, vivos, habilitada, log, kambi } = opts;
   if (cfg.lab_activo === false) return;
   const U = await umbrales(log);
   const porId = new Map(vivos.map((f) => [f.fixture.id, f]));
@@ -132,11 +133,21 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
     const n = Number(u?.n ?? o.n_hist ?? 0);
     const listo = Number(U.get(o.estrategia)?.n ?? o.n_hist ?? 0) >= nMin;
     let push = 0;
-    if (listo && cfg.lab_push !== false && avisan.has(o.estrategia)) {
+    // DECISIONES 54 (Fredy, 20 nov): BetPlay y Rushbet. Sin esa línea en ninguna de las dos no hay push;
+    // la oportunidad igual queda alertada (con lo que ofrecían) para el histórico. El umbral sigue igual.
+    let ofK: OfertaCasa | null = null, gate = { sale: true, motivo: null as string | null };
+    if (kambi && o.fs_id) {
+      try { ofK = await kambi.oferta(o.fs_id, "goles", Number(o.linea), { goles: Number(o.goles_gatillo) }); gate = pasaPush(cfg, ofK, true); }
+      catch (e) { log(`lab: kambi ${o.fixture_id}: ${(e as Error).message}`); }
+    }
+    if (listo && cfg.lab_push !== false && avisan.has(o.estrategia) && gate.sale) {
       const L = NOMBRE_LAB[o.estrategia];
-      // Monto sugerido con la casa más baja de las que pagan el umbral o más (las demás no tienen valor)
+      // Monto sugerido con la casa más baja de las que pagan el umbral o más (las demás no tienen valor).
+      // Con BetPlay/Rushbet, el monto sale de la más baja de ellas: es donde se entra de verdad.
       const validas = casas.filter((x: any) => x.c >= umbral);
-      const baja = validas[validas.length - 1];
+      const propias = ofK?.estado === "ofrece" ? ofK.casas : [];
+      const baja = propias.length ? propias[propias.length - 1] : validas[validas.length - 1];
+      const bajoUmbral = propias.length && propias[0].c < umbral ? ` · ojo: ${propias[0].casa} paga menos que el umbral` : "";
       // Formato de Fredy (18 nov): país, competencia, partido, mercado, monto y casas; al final, el porqué
       const [paisL, ...resto] = String(o.liga ?? "").split(" · ");
       push = await notificar((d) => ({
@@ -144,16 +155,17 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
         cuerpo: lineasEntrada({
           pais: resto.length ? paisL : null, liga: resto.length ? resto.join(" · ") : (paisL || null),
           partido: `${o.local} ${f.goals.home}–${f.goals.away} ${o.visitante} · min ${min}`,
-          mercado: `Más de ${coma(Number(o.linea), 1)} goles (umbral ${coma(umbral)})`,
-          d, casas, cuotaMonto: baja.c, casaMonto: baja.casa, maxPct: Number(cfg.monto_max_pct ?? 10),
+          mercado: `Más de ${coma(Number(o.linea), 1)} goles (umbral ${coma(umbral)})${bajoUmbral}`,
+          d, casas: [...propias, ...casas], cuotaMonto: baja.c, casaMonto: baja.casa, maxPct: Number(cfg.monto_max_pct ?? 10),
         }) + `\nEn la base: ${u?.aciertos ?? "?"} de ${n}${tramo ? ` que seguían 1 gol al ${tramo}'` : ""} ${L.texto}.`,
         url: "./#laboratorio", tag: `lab-${o.estrategia}-${o.fixture_id}`,
       }), { soloAdmin: true });
     }
     await sql`update futbol.lab_oportunidades set alertada = true, ts_alerta = now(), minuto_alerta = ${min},
-                cuota_alerta = ${mejor.c}, casa_alerta = ${mejor.casa}, push_enviados = ${push}, umbral = ${umbral}
+                cuota_alerta = ${mejor.c}, casa_alerta = ${mejor.casa}, push_enviados = ${push}, umbral = ${umbral},
+                cuota_casas = ${ofK ? sql.json(casasJson(ofK)) : null}, motivo_sin_push = ${gate.motivo}
               where id = ${o.id}`;
-    log(`lab: ${o.estrategia}${tramo ? `@${tramo}` : ""} ${o.fixture_id} supera umbral ${umbral} con ${mejor.casa} ${mejor.c}${listo ? "" : ` (sin push: ${n} casos < ${nMin})`}, push=${push}`);
+    log(`lab: ${o.estrategia}${tramo ? `@${tramo}` : ""} ${o.fixture_id} supera umbral ${umbral} con ${mejor.casa} ${mejor.c}${listo ? "" : ` (sin push: ${n} casos < ${nMin})`}${gate.sale ? "" : ` (sin push: ${gate.motivo})`}, push=${push}`);
   }
 
   // 3. Resolver: acierto apenas el marcador pasa la línea; fallo/acierto definitivo al terminar

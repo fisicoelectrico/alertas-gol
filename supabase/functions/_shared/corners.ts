@@ -35,6 +35,7 @@ import { ApiFootball } from "./apifootball.ts";
 import { notificar, cuotaTxt, ligaFS } from "./notificar.ts";
 import { umbrales } from "./lab.ts";
 import { fotoReciente, ofertaCorners } from "./cornersapi.ts";
+import { Kambi, OfertaCasa, casasJson } from "./kambi.ts";
 
 type Mercado = "c1t_cero20" | "c1t_uno" | "c2t_fav77";
 const es1T = (m: string) => m.startsWith("c1t");
@@ -116,8 +117,10 @@ export async function cicloCorners(args: {
   cfg: Config; vivosFS: FS.PartidoFS[]; conocidos: Map<string, any>; api: ApiFootball; log: (s: string) => void;
   /** Toma una foto de /odds/live fuera de turno (DECISIONES 51). Se usa como mucho una vez por ciclo. */
   fotoForzada?: () => Promise<unknown>;
+  /** Cuotas de BetPlay y Rushbet (DECISIONES 54). Si está activo, manda sobre las otras fuentes. */
+  kambi?: Kambi | null;
 }) {
-  const { cfg, vivosFS, conocidos, api, log, fotoForzada } = args;
+  const { cfg, vivosFS, conocidos, api, log, fotoForzada, kambi } = args;
   let forzadaUsada = false;
   await resolverCorners(vivosFS, log, cfg.corners_push !== false);
   if (cfg.corners_activo !== true) return;
@@ -210,7 +213,19 @@ export async function cicloCorners(args: {
     let vistos: any = null, consultada = false, motivoSinCuota: string | null = null;
     let lineaOfrecida: number | null = null, cuotaOfrecida: number | null = null, fotoId: number | null = null;
     const alcance = es1T(mercado) ? "1T" : "partido";
-    if (cfg.corners_api_fotos === true) {
+    let ofK: OfertaCasa | null = null;
+    if (kambi?.activo) {
+      // DECISIONES 54: la cuota sale de BetPlay y Rushbet. Sin el mercado de córners de ese tiempo en
+      // ninguna de las dos, el aviso se guarda pero no hay push (regla de Fredy del 19 nov).
+      try { ofK = await kambi.oferta(p.id, es1T(mercado) ? "corners_1t" : "corners", linea); }
+      catch (e) { log(`córners: kambi ${p.id}: ${(e as Error).message}`); }
+      consultada = !!ofK && ofK.estado !== "kambi_caido";
+      hayMercado = ofK ? (ofK.estado === "ofrece" || ofK.estado === "sin_linea") : null;
+      if (ofK?.estado === "ofrece") { cuota = ofK.casas[ofK.casas.length - 1].c; mercadoNombre = `Kambi: ${ofK.casas.map((x) => x.casa).join(", ")}`; }
+      else if (ofK?.cercana) { lineaOfrecida = ofK.cercana.linea; cuotaOfrecida = ofK.cercana.casas[ofK.cercana.casas.length - 1].c; mercadoNombre = "Kambi"; }
+      if (ofK && ofK.estado !== "ofrece") motivoSinCuota = ofK.estado === "sin_linea" ? "sin_esa_linea" : `casas_${ofK.estado}`;
+      else if (!ofK) motivoSinCuota = "error_kambi";
+    } else if (cfg.corners_api_fotos === true) {
       // DECISIONES 51: la cuota sale de la foto de /odds/live (todos los partidos en 1 consulta). Si no hay
       // una reciente de este partido, se toma una fuera de turno (máximo una por ciclo, dentro del cupo).
       const vig = Number(cfg.corners_api_fotos_vigencia_min ?? 4);
@@ -250,11 +265,11 @@ export async function cicloCorners(args: {
       insert into futbol.alertas_corners (mercado, version, parametros, fs_id, fixture_id, liga, local, visitante, favorito,
         minuto, goles_local, goles_visitante, corners_local, corners_visitante, linea, objetivo,
         api_consultada, hay_mercado, cuota, mercado_nombre, motivo_sin_cuota, mercados_vistos, stats,
-        linea_ofrecida, cuota_ofrecida, foto_id)
+        linea_ofrecida, cuota_ofrecida, foto_id, cuota_casas)
       values (${mercado}, ${P.version}, ${sql.json(P as any)}, ${p.id}, ${fx}, ${p.liga}, ${p.local}, ${p.visitante}, ${favorito},
         ${minuto}, ${p.gl}, ${p.gv}, ${actual[0]}, ${actual[1]}, ${linea}, ${objetivo},
         ${consultada}, ${hayMercado}, ${cuota}, ${mercadoNombre}, ${motivoSinCuota}, ${vistos ? sql.json(vistos) : null}, ${sql.json(ck.extra as any)},
-        ${lineaOfrecida}, ${cuotaOfrecida}, ${fotoId})
+        ${lineaOfrecida}, ${cuotaOfrecida}, ${fotoId}, ${ofK ? sql.json(casasJson(ofK)) : null})
       on conflict (fs_id, mercado) do nothing
       returning id`;
     await chequeo(p, mercado, minuto, actual, true, null);
@@ -264,7 +279,10 @@ export async function cicloCorners(args: {
     // Sin la línea exacta, las alternativas del mismo tiempo (visto en el 1T: "más de 2" y "exactamente 2").
     // La fuente de la cuota no se muestra (Fredy, 15 nov).
     const alt = cuota || cuotaOfrecida ? null : alternativas(vistos, alcance, total + objetivo);
-    const precio = cuota ? `, paga ${cuotaTxt(cuota)}`
+    // Con BetPlay/Rushbet se muestra cada casa (la cuota guardada es la más baja, la prudente para el monto)
+    const precio = ofK?.estado === "ofrece" ? `, paga ${ofK.casas.map((x) => `${x.casa} ${cuotaTxt(x.c)}`).join(" · ")}`
+      : ofK?.cercana ? `. No está esa línea; ofrecen más de ${coma(ofK.cercana.linea)}: ${ofK.cercana.casas.map((x) => `${x.casa} ${cuotaTxt(x.c)}`).join(" · ")}`
+      : cuota ? `, paga ${cuotaTxt(cuota)}`
       : cuotaOfrecida && lineaOfrecida ? `. No está esa línea; la casa ofrece más de ${coma(lineaOfrecida)} a ${cuotaTxt(cuotaOfrecida)}`
       : alt ? `. Sin esa línea: ${alt}` : "";
     const cuerpo = mercado === "c1t_cero20"

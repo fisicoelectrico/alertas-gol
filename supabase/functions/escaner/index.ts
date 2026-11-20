@@ -46,6 +46,7 @@ import { avisoAlerta, avisoResultado, avisosEnVivo } from "../_shared/avisos.ts"
 import * as FS from "../_shared/flashscore.ts";
 import { cicloCorners, guardarCornersPartidos } from "../_shared/corners.ts";
 import { fotoCornersApi } from "../_shared/cornersapi.ts";
+import { cicloKambi, Kambi, casasJson, pasaPush } from "../_shared/kambi.ts";
 import { cicloCuotasVivo, cuotaOverFS, salud } from "../_shared/cuotasvivo.ts";
 import { cicloLab, vigilados } from "../_shared/lab.ts";
 import { registrar } from "../_shared/identidad.ts";
@@ -407,6 +408,8 @@ Deno.serve(async (req) => {
   const info = new Map<number, any>();
   const favs = new Map<number, any>();
   const yaAlertados = new Set<number>();
+  // Cuotas de BetPlay y Rushbet (DECISIONES 54): se arma en el ciclo Flashscore antes de córners y candidatos
+  let kambi: Kambi | null = null;
   const resultadoDetalle = new Map<number, A.MotivoRadar>();
   const evaluaciones = new Map<number, Record<string, unknown>>();
 
@@ -765,9 +768,20 @@ Deno.serve(async (req) => {
           alertasNuevas++;
           const favNombre = fav === "home" ? f.teams.home.name : f.teams.away.name;
           // Texto para gente común (spec 1.6), con botones Entré / No entro
-          const enviados = await avisoAlerta(Number(nueva[0].id));
+          // DECISIONES 54 (Fredy, 20 nov): solo hay push si BetPlay o Rushbet ofrecen esa línea; la alerta
+          // igual queda guardada con lo que ofrecían y el motivo. La regla de disparo no cambia.
+          let gate = { sale: true, motivo: null as string | null }, casasK: Record<string, number> | null = null;
+          if (kambi && f0.__fs?.id) {
+            try {
+              const o = await kambi.oferta(f0.__fs.id, "goles", linea, { goles: gl + gv });
+              gate = pasaPush(cfg, o, true); casasK = casasJson(o);
+            } catch (e) { log(`kambi alerta ${id}: ${(e as Error).message}`); }
+          }
+          await sql`update futbol.alertas set cuota_casas = ${casasK ? sql.json(casasK) : null}, motivo_sin_push = ${gate.motivo}
+                    where id = ${nueva[0].id}`;
+          const enviados = gate.sale ? await avisoAlerta(Number(nueva[0].id)) : 0;
           await sql`update futbol.alertas set push_enviados = ${enviados} where id = ${nueva[0].id}`;
-          log(`ALERTA ${nueva[0].id} ${favNombre} push=${enviados}`);
+          log(`ALERTA ${nueva[0].id} ${favNombre} push=${enviados}${gate.sale ? "" : ` (sin push: ${gate.motivo})`}`);
         }
       }
     }
@@ -984,7 +998,15 @@ Deno.serve(async (req) => {
       // Tiene su propio cupo dentro del presupuesto: funciona aunque api_football_activa = false.
       try { (detalle as any).corners_api = await fotoCornersApi({ cfg, vivosFS, log }); }
       catch (e) { log(`córners api: ${(e as Error).message}`); }
-      try { await cicloCorners({ cfg, vivosFS, conocidos, api, log, fotoForzada: () => fotoCornersApi({ cfg, vivosFS, log, forzada: true }) }); }
+      // 5a''. Cuotas de BetPlay y Rushbet (DECISIONES 54): lista en vivo de cada casa y cuotas de los partidos
+      // que importan (candidatos, gol temprano vigilado y franjas de córners). Gratis; aislado si falla.
+      try {
+        const prioridad = new Set<string>(enVivo.filter(esCandidato).map((f) => f.__fs?.id).filter(Boolean));
+        for (const r of await sql`select fs_id from futbol.lab_oportunidades where vigilando and fs_id is not null`) prioridad.add(r.fs_id);
+        kambi = await cicloKambi({ cfg, vivosFS, fixtureDe: (fs) => conocidos.get(fs)?.fixture_id ?? null, prioridad, log });
+        (detalle as any).kambi = kambi.resumen;
+      } catch (e) { log(`kambi: ${(e as Error).message}`); }
+      try { await cicloCorners({ cfg, vivosFS, conocidos, api, log, kambi, fotoForzada: () => fotoCornersApi({ cfg, vivosFS, log, forzada: true }) }); }
       catch (e) { log(`córners: ${(e as Error).message}`); }
       // 5b'. Córners del 1T, 2T y total de cada partido terminado de ligas habilitadas (DECISIONES 45)
       try { await guardarCornersPartidos(cfg, log); }
@@ -999,7 +1021,7 @@ Deno.serve(async (req) => {
         const r = await cicloCuotasVivo({ cfg, enVivo, habilitada: hab, candidatos: new Set(enVivo.filter(esCandidato).map((f) => f.fixture.id)), lab, log });
         if (r.consultas) log(`fs vivo: ${r.fotos} fotos, ${r.consultas} consultas, ${r.errores} errores`);
         (detalle as any).fs_vivo = r;
-        await cicloLab({ cfg, vivos: enVivo, habilitada: hab, log });
+        await cicloLab({ cfg, vivos: enVivo, habilitada: hab, log, kambi });
       } catch (e) { log(`cuotas vivo/lab: ${(e as Error).message}`); }
 
       // 5d. Historial desde el gol (DECISIONES 44): si el favorito va perdiendo antes de ser candidato (1T,
