@@ -245,3 +245,12 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 - **Cambio 3, tope:** `kambi_max_eventos` de 15 a 40 por casa (el sábado hay más partidos a la vez). Si se llega al tope queda en el log.
 - **Cambio 4, nombres:** el emparejamiento Flashscore ↔ Kambi acepta la misma palabra con otra transliteración (1 letra distinta en palabras de 6+ letras, 2 en 9+). Caso: Sumqayit–Sabah FC (Flashscore) / Sumgayit FK–Sabah FK (Kambi) quedó `casas_sin_partido`. De los otros 11 `sin_partido` del día, revisados contra la lista en vivo de BetPlay: ninguno estaba ofrecido.
 - Cero consultas a API-Football. `kambi_pedidos` tipo `lista` nunca se marca `procesado`, y está bien: el escáner lee siempre la lista más nueva (`kambi_listas`), la columna solo aplica a los de tipo `evento`.
+
+## 61. Cuota de BetPlay/Rushbet desde el gol que deja al favorito perdiendo (20 nov 2026, a pedido de Fredy)
+- **Pregunta de Fredy:** ¿desde el gol que pone al favorito en desventaja se toma la cuota de "otro gol" en cada ciclo? Caso: Shakhtar Donetsk 0-1 Livyi Bereg (fixture -199, gol del visitante al 18', anulado y vuelto a marcar al 24').
+- **Lo que mostraba la base:** cero filas en `cuotas_casa`, `kambi_quiero` y `kambi_pedidos` para ese partido. Solo había fotos de Flashscore (Wplay/Betano/Stake) cada 10 min y cada 2 desde el 47'. Dos fallas:
+  1. **Emparejamiento:** Kambi lo llama "Shakhtar Donetsk - FC Levy Bereg Kiev". "Livyi Bereg" frente a "Levy Bereg Kiev" comparte 1 de 3 palabras y el puntaje daba 0,47 (< 0,5). BetPlay y Rushbet sí lo ofrecían, pero el escáner creía que no.
+  2. **Cola de pedidos:** solo entraban los candidatos (2T dentro de la ventana). Desde el gol hasta el 2T no había ninguna lectura, y al enviarse la alerta el partido salía de la cola (los recordatorios del PR #59 se quedaban esperando una cuota que nadie pedía).
+- **Cambio 1:** si un equipo es idéntico, el otro comparte al menos una palabra real y la hora coincide (±20 min), el par vale 0,5. Las categorías (U19, W, II) se siguen separando antes.
+- **Cambio 2:** la prioridad de Kambi = favorito perdiendo desde el gol (`enHistorial`: 1T, descanso, 2T antes de la ventana) + candidatos + alertas pendientes de las últimas 3 h. Se leen cada `kambi_intervalo_min` (2), que es el ritmo del escáner.
+- Cero consultas a API-Football. No cambia la regla (no hay versión nueva): solo de dónde y desde cuándo se lee la cuota.

@@ -284,7 +284,12 @@ export function emparejar(fs: PartidoFS[], api: FixtureApi[]): Map<string, { fix
       // Al menos un equipo debe compartir una palabra de verdad (no solo la "W" o el "U17")
       if (!comunes(f.local, a.local).reales && !comunes(f.visitante, a.visitante).reales) continue;
       const pl = parecido(f.local, a.local), pv = parecido(f.visitante, a.visitante);
-      const p = Math.min(pl, pv) * 0.6 + ((pl + pv) / 2) * 0.4;
+      let p = Math.min(pl, pv) * 0.6 + ((pl + pv) / 2) * 0.4;
+      // Un equipo idéntico + el otro comparte una palabra real + misma hora = mismo partido, aunque el nombre del
+      // otro venga largo o con otra transliteración. "Livyi Bereg" / "FC Levy Bereg Kiev" daba 0,47 y BetPlay
+      // y Rushbet nunca se emparejaban con Shakhtar Donetsk (20 nov). Un equipo no juega dos partidos a la vez
+      // (las categorías U19/W/II ya se separan arriba).
+      if (p < 0.5 && Math.max(pl, pv) >= 1 && comunes(f.local, a.local).reales && comunes(f.visitante, a.visitante).reales) p = 0.5;
       if (p >= 0.5) candidatos.push({ fs: f.id, api: a.fixture_id, p });
     }
   }
