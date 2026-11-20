@@ -151,6 +151,7 @@ async function resumen() {
   return {
     en_vivo: enVivo, ultimo_escaneo: ultimo ?? null, ultimo_seguimiento: ultimoSeg ?? null,
     intervalo_seguimiento_min: cfg.intervalo_seguimiento_min,
+    intervalo_fs_min: cfg.intervalo_fs_min ?? 5, intervalo_fs_seg_min: cfg.intervalo_fs_seg_min ?? 2, intervalo_fs_listo_min: cfg.intervalo_fs_listo_min ?? 1,
     presupuesto: await estadoPresupuesto(cfg), presupuesto_diario: cfg.presupuesto_diario,
     regla_version: cfg.regla_version, escaneo_activo: cfg.escaneo_activo,
     horas_activas_utc: cfg.horas_activas_utc, cuota_objetivo: cfg.cuota_objetivo, dominancia_min: cfg.dominancia_min,

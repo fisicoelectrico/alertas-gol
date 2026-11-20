@@ -173,8 +173,11 @@ function franjaCorners(cfg: Config, p: FS.PartidoFS, cornersKambi: number | null
 export async function cicloKambi(args: {
   cfg: Config; vivosFS: FS.PartidoFS[]; fixtureDe: (fsId: string) => number | null;
   prioridad: Set<string>; log: Log;
+  /** DECISIONES 62: los que deciden una push de goles (candidatos, alertas abiertas, gol temprano): el cron los pide cada 30 s. */
+  urgente?: Set<string>;
 }): Promise<Kambi> {
   const { cfg, vivosFS, fixtureDe, prioridad, log } = args;
+  const urgente = args.urgente ?? new Set<string>();
   const activo = cfg.kambi_activo !== false;
   via = String(cfg.kambi_via ?? "cola") === "fetch" ? "fetch" : "cola";
   const servidor = String(cfg.kambi_servidor ?? "us.offering-api.kambicdn.com");
@@ -242,9 +245,18 @@ export async function cicloKambi(args: {
         const pedir = quiere.slice(0, maxEv);
         for (const fs of pedir) {
           const e = pareja.get(fs)!.find((x) => x.casa === casa)!;
-          await sql`insert into futbol.kambi_quiero (casa, evento_id, fs_id, fixture_id, hasta)
-                    values (${casa}, ${e.id}, ${fs}, ${fixtureDe(fs)}, now() + interval '6 minutes')
-                    on conflict (casa, evento_id) do update set hasta = excluded.hasta, fs_id = excluded.fs_id, fixture_id = excluded.fixture_id`;
+          // La columna urgente la crea la migración futbol_kambi_urgente (junto con kambi_urgente_seg en config):
+          // sin esa fila de config se inserta como antes, para no romper la cola si la migración no está.
+          if (cfg.kambi_urgente_seg == null) {
+            await sql`insert into futbol.kambi_quiero (casa, evento_id, fs_id, fixture_id, hasta)
+                      values (${casa}, ${e.id}, ${fs}, ${fixtureDe(fs)}, now() + interval '6 minutes')
+                      on conflict (casa, evento_id) do update set hasta = excluded.hasta, fs_id = excluded.fs_id, fixture_id = excluded.fixture_id`;
+            continue;
+          }
+          await sql`insert into futbol.kambi_quiero (casa, evento_id, fs_id, fixture_id, hasta, urgente)
+                    values (${casa}, ${e.id}, ${fs}, ${fixtureDe(fs)}, now() + interval '6 minutes', ${urgente.has(fs)})
+                    on conflict (casa, evento_id) do update set hasta = excluded.hasta, fs_id = excluded.fs_id,
+                      fixture_id = excluded.fixture_id, urgente = excluded.urgente`;
         }
         resumen[casa] = { en_vivo: lista.length, emparejados: pares.size, guardadas, pedidos: pedir.length, quiere: quiere.length };
         return;

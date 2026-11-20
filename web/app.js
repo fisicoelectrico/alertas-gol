@@ -137,11 +137,20 @@ function notasFaltantes(p, s, ev, cfg) {
     const gap = Number(cfg.momentum_gap_min) || 8;
     out.push(`Momentum: necesita una foto de estadísticas de hace ${gap}+ min. La primera fue al ${m0}', así que aparece desde el ${m0 + gap}'.`);
   }
+  // DECISIONES 62: la cuota que decide es la de BetPlay/Rushbet (Kambi); se dice por qué falta en ellas.
+  const K = {
+    sin_partido: "BetPlay y Rushbet no tienen este partido en vivo",
+    sin_lectura: "BetPlay/Rushbet tienen el partido; la primera lectura de cuotas llega en el próximo minuto",
+    sin_mercado: "BetPlay y Rushbet no ofrecen goles en vivo en este partido",
+    sin_linea: `BetPlay y Rushbet no ofrecen Over ${s.linea_over} ahora`,
+    kambi_caido: "No respondió el feed de BetPlay/Rushbet",
+  };
   if (s.dominancia != null && s.cuota_over == null) {
     const ls = Object.entries(ev.lineas || {}).sort((a, b) => Number(a[0]) - Number(b[0]));
-    out.push(ls.length
-      ? `Las casas no ofrecen Over ${s.linea_over} en este partido. Sí hay: ${ls.map(([l, c]) => `Over ${l} a ${n(c)}`).join(" · ")}.`
-      : `Sin cuota en vivo de Over ${s.linea_over} en las casas colombianas.`);
+    const motivo = K[ev.kambi] || `Sin cuota en vivo de Over ${s.linea_over} en BetPlay ni Rushbet`;
+    out.push(ls.length ? `${motivo}. Sí hay: ${ls.map(([l, c]) => `Over ${l} a ${n(c)}`).join(" · ")}.` : `${motivo}.`);
+  } else if (s.cuota_over != null && ev.mercado !== "kambi" && ev.kambi) {
+    out.push(`Cuota de referencia (Wplay/Betano/Stake): ${K[ev.kambi] || "sin lectura de BetPlay/Rushbet"}, así que no habría push.`);
   }
   return out.length ? `<p class="nota">${out.map(esc).join("<br>")}</p>` : "";
 }
@@ -166,6 +175,8 @@ function tarjetaPartido(p, cfg) {
       <div class="metrica ${cls(ev.momentum)}"><span>Momentum</span><b>${n(s.momentum)}</b></div>
       <div class="metrica ${cls(ev.cuota)}"><span>Over ${s.linea_over ?? "–"}</span><b>${n(s.cuota_over)}</b></div>
     </div>
+    ${ev.mercado === "kambi" && ev.casas && Object.keys(ev.casas).length
+      ? `<p class="nota">Over ${esc(s.linea_over)}: ${Object.entries(ev.casas).map(([c, v]) => `${esc(c)} ${n(v)}`).join(" · ")} · al ${esc(s.minuto)}'</p>` : ""}
     ${notasFaltantes(p, s, ev, cfg)}
     ${spark(p.serie, Number(cfg.dominancia_min) || 1.3)}
     ${p.alerta ? `<p class="aviso">Alerta enviada al ${p.alerta.minuto}' con cuota ${n(p.alerta.cuota)} · ${esc(p.alerta.resultado)}</p>` : ""}
@@ -400,7 +411,7 @@ const pantallas = {
         <small>${hace(u.ts)} · ver lista ›</small></a>` : "";
     return `${resumenTop}<div class="titulo-seccion"><h2>Candidatos en seguimiento</h2><small>${r.en_vivo.length}</small></div>
       ${lista}
-      <p class="nota">${esc(estado)}. Con el plan gratuito el radar busca partidos nuevos cada 15 a 35 minutos; los candidatos se actualizan cada ${esc(r.intervalo_seguimiento_min ?? 5)} minutos.</p>`;
+      <p class="nota">${esc(estado)}. El radar de Flashscore mira todos los partidos cada ${esc(r.intervalo_fs_min ?? 5)} min; con candidatos, cada ${esc(r.intervalo_fs_seg_min ?? 2)} min, y cada ${esc(r.intervalo_fs_listo_min ?? 1)} min si un candidato ya cumple todo menos la cuota. La cuota de BetPlay y Rushbet se lee cada 30 s para los candidatos.</p>`;
   },
 
   async radar() {
