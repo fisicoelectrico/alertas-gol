@@ -56,6 +56,8 @@ export interface Kambi {
   pareja: Map<string, EventoKambi[]>;
   /** DECISIONES 66: fsId → "Local - Visitante" de Kambi cuando solo un equipo encaja (pareja dudosa, a revisar). */
   dudosos: Map<string, string>;
+  /** DECISIONES 69: fsId → nombres de cada equipo en Flashscore y en Kambi, para el botón Confirmar / No es. */
+  dudososDet: Map<string, { fl: string; fv: string; kl: string; kv: string }>;
   resumen: Record<string, unknown>;
   oferta(fsId: string, tipo: TipoCuota, linea: number, opts?: { goles?: number }): Promise<OfertaCasa>;
 }
@@ -193,12 +195,23 @@ export async function cicloKambi(args: {
   const vig = Math.max(1, Number(cfg.kambi_vigencia_min ?? 5));
   const pareja = new Map<string, EventoKambi[]>();
   const dudosos = new Map<string, string>();
+  const dudososDet = new Map<string, { fl: string; fv: string; kl: string; kv: string }>();
   const resumen: Record<string, unknown> = {};
   let ok = false;
 
   const enVivo = vivosFS.filter((p) => p.estado === 2);
   if (activo && enVivo.length) {
     const porFs = new Map(enVivo.map((p) => [p.id, p]));
+    // DECISIONES 69: lo que Fredy confirmó a mano. 'si' = alias de equipo (nombre FS → nombre Kambi): se
+    // reemplaza el nombre ANTES de emparejar, así el par sale idéntico y entra con cuotas y alertas como
+    // cualquier otro. 'no' = esa pareja dudosa no es, deja de marcarse "Revisar".
+    const alias = new Map<string, string>(), noEs = new Set<string>();
+    try {
+      for (const r of await sql`select fs, kambi, decision from futbol.kambi_alias order by creado`) {
+        if (r.decision === "si") alias.set(r.fs, r.kambi); else noEs.add(`${r.fs}#${r.kambi}`);
+      }
+    } catch (e) { log(`kambi: alias: ${(e as Error).message}`); }
+    const conAlias = alias.size ? enVivo.map((p) => ({ ...p, local: alias.get(p.local) ?? p.local, visitante: alias.get(p.visitante) ?? p.visitante })) : enVivo;
     await Promise.all(Object.entries(casas).filter(([casa]) => NOMBRE_CASA[casa]).map(async ([casa, codigo]) => {
       let lista: EventoKambi[];
       try {
@@ -215,10 +228,12 @@ export async function cicloKambi(args: {
       ok = true;
       const porId = new Map(lista.map((e) => [e.id, e]));
       const comoApi = lista.map((e) => ({ fixture_id: e.id, local: e.local, visitante: e.visitante, kickoff: e.inicio }));
-      const pares = FS.emparejar(enVivo, comoApi);
-      for (const [fsId, evId] of FS.dudosos(enVivo, comoApi, pares)) {
-        const e = porId.get(evId);
-        if (e && !dudosos.has(fsId)) dudosos.set(fsId, `${e.local} - ${e.visitante}`);
+      const pares = FS.emparejar(conAlias, comoApi);
+      for (const [fsId, evId] of FS.dudosos(conAlias, comoApi, pares)) {
+        const e = porId.get(evId), f = porFs.get(fsId);
+        if (!e || !f || dudosos.has(fsId) || noEs.has(`${f.local}|${f.visitante}#${e.local} - ${e.visitante}`)) continue;
+        dudosos.set(fsId, `${e.local} - ${e.visitante}`);
+        dudososDet.set(fsId, { fl: f.local, fv: f.visitante, kl: e.local, kv: e.visitante });
       }
       for (const [fsId, { fixture_id }] of pares) {
         const e = porId.get(fixture_id);
@@ -343,8 +358,8 @@ export async function cicloKambi(args: {
     return { estado: "sin_linea", casas: [], cercana: l !== undefined ? { linea: l, casas: otras.get(l)!.sort(orden) } : null };
   }
 
-  for (const fsId of pareja.keys()) dudosos.delete(fsId);   // si una casa sí lo emparejó, no es dudoso
-  return { activo, ok, pareja, dudosos, resumen, oferta };
+  for (const fsId of pareja.keys()) { dudosos.delete(fsId); dudososDet.delete(fsId); }   // si una casa sí lo emparejó, no es dudoso
+  return { activo, ok, pareja, dudosos, dudososDet, resumen, oferta };
 }
 
 /** {"BetPlay": 1.85, "Rushbet": 1.83} para guardar en la base. */

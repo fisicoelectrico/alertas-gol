@@ -315,3 +315,17 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 - El cierre de córners (Salió / No salió) les llega a los mismos que recibieron el aviso.
 
 **Ojo con el 1,40 en Más de 1,5.** El umbral automático subía por minuto si seguía 1 gol (al 75': 6 de 10, cuota justa 1,67). Con el 1,40 fijo, una entrada tardía de Más de 1,5 puede salir por debajo de la cuota justa. Se acepta por el fin de semana para juntar casos.
+
+## 69. Botón "Confirmar" / "No es" en los nombres dudosos, con alias de equipo que se queda guardado (20 nov 2026, a pedido de Fredy)
+
+**Caso.** Oss–Roda (Eerste Divisie) y K. Lierse S.K.–Sporting Lokeren (Challenger Pro League) salían "Revisar: en BetPlay sería TOP Oss - Roda JC Kerkrade" y "… KSK Lierse Kempenzonen - KSC Lokeren". Los dos eran el mismo partido, pero como solo un nombre encajaba, quedaban sin cuota, sin alerta y sin estadísticas de BetPlay/Rushbet.
+
+**Cambio.**
+- En la etiqueta ámbar, el administrador ve dos botones: **Confirmar** y **No es** (los amigos siguen viendo solo la etiqueta).
+- Confirmar guarda en `futbol.kambi_alias` un alias POR EQUIPO (`fs` = nombre en Flashscore, `kambi` = nombre en BetPlay/Rushbet, `decision='si'`). En cada ciclo, `cicloKambi` reemplaza los nombres de Flashscore por su alias ANTES de `emparejar`, así la pareja sale idéntica (puntaje 1) y entra como cualquier otra: cuotas, prioridad de lectura, alertas, córners y estadísticas. Desde el siguiente ciclo del escáner (1-2 min), y para siempre: la próxima vez que juegue Oss ya no pide revisión.
+- No es guarda la pareja completa (`fs`="Local|Visitante", `kambi`="Local - Visitante", `decision='no'`): deja de marcarse "Revisar" y pasa a "Sin BetPlay/Rushbet". Confirmar después la misma pareja borra ese rechazo.
+- Ruta nueva `POST /api/admin/kambi-alias` (solo admin). El radar guarda `kbd` = nombres de los dos lados para que el botón sepa qué alias crear.
+
+**Por qué por equipo y no por partido.** El mismo equipo vuelve a jugar cada semana con otro rival; guardar el alias del equipo hace que la siguiente vez empareje solo. El riesgo (un alias de nombre genérico que se cruce con otro equipo) es bajo: además del nombre, `emparejar` exige la misma hora (±20 min) y la misma categoría (W, U19, II…).
+
+**Volver atrás.** `delete from futbol.kambi_alias where id = …` (o la tabla entera). Migración solo aditiva: `20261120210000_futbol_kambi_alias.sql`.

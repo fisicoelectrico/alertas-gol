@@ -572,3 +572,9 @@ button.vfila:disabled .vflecha { visibility: hidden; }
 .pf-eq span { max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vsin { margin-top: 3px; font-size: 11px; color: var(--tenue); opacity: .75; }
 .vrevisar { margin-top: 3px; font-size: 11px; font-weight: 700; color: var(--ambar); border: 1px solid var(--ambar); border-radius: 10px; padding: 0 8px; }
+/* DECISIONES 69: Confirmar / No es dentro de la etiqueta ámbar (solo admin) */
+.vrevisar.ok { color: var(--cesped); border-color: currentColor; }
+.vrev-botones { display: flex; gap: 8px; margin: 6px 0 4px; }
+.vrev-botones [role=button] { padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; cursor: pointer; }
+.vrev-si { background: var(--ambar); color: #1a1a1a; }
+.vrev-no { border: 1px solid var(--ambar); color: var(--ambar); }

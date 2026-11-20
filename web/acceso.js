@@ -291,6 +291,20 @@ const sinTildes = (t) => String(t ?? "").normalize("NFD").replace(/[̀-ͯ]/g, ""
 let vistaVivo = (() => { try { return localStorage.getItem("vistaVivo") || "perdiendo"; } catch (_) { return "perdiendo"; } })();
 let busquedaVivo = "";
 
+// DECISIONES 69: en la etiqueta ámbar el administrador confirma (o descarta) la pareja con BetPlay/Rushbet.
+// Confirmar guarda un alias por equipo: desde el siguiente ciclo del escáner (1-2 min) el partido se empareja
+// solo y entra con cuotas, alertas y estadísticas; las próximas veces ya no pide revisión.
+const kbRespondidos = new Map();   // id → "si" | "no", mientras el escáner aún no corre con la decisión
+function revisar(p) {
+  const r = kbRespondidos.get(String(p.id));
+  if (r === "si") return `<span class="vrevisar ok">Confirmado: ${esc(p.kbn || "")}. Entra en el próximo ciclo</span>`;
+  if (r === "no") return `<span class="vsin">Descartado: no es ${esc(p.kbn || "")}</span>`;
+  const botones = esAdmin() && p.kbd ? `<span class="vrev-botones">
+      <span role="button" tabindex="0" class="vrev-si" data-kb="si" data-id="${esc(p.id)}">Confirmar</span>
+      <span role="button" tabindex="0" class="vrev-no" data-kb="no" data-id="${esc(p.id)}">No es</span></span>` : "";
+  return `<span class="vrevisar" title="Solo un equipo coincide con BetPlay/Rushbet">Revisar: en BetPlay sería ${esc(p.kbn || "otro nombre")}${botones}</span>`;
+}
+
 function listaEnVivo(w, abiertas) {
   if (!w?.partidos) return "";
   const conAlerta = new Set(abiertas.map((a) => `${a.local}|${a.visitante}`));
@@ -310,7 +324,7 @@ function listaEnVivo(w, abiertas) {
       <span class="vequipos"><span>${esc(p.l)}${p.fav === "home" ? " <i class=\"vfav\">★</i>" : ""}</span><span>${esc(p.v)}${p.fav === "away" ? " <i class=\"vfav\">★</i>" : ""}</span>
         <small class="vliga">${esc([p.pais, ligaCortaTxt(p.liga)].filter(Boolean).join(" · "))}</small></span>
       <b class="vgoles num">${p.gl}<br>${p.gv}</b>
-      <span class="vpie">${p.c ? `<span class="vcumple">Candidato</span>` : ""}${cuota(p)}${p.kb === false ? `<span class="vsin">Sin BetPlay/Rushbet</span>` : ""}${p.kb === "revisar" ? `<span class="vrevisar" title="Solo un equipo coincide con BetPlay/Rushbet">Revisar: en BetPlay sería ${esc(p.kbn || "otro nombre")}</span>` : ""}</span>
+      <span class="vpie">${p.c ? `<span class="vcumple">Candidato</span>` : ""}${cuota(p)}${p.kb === false ? `<span class="vsin">Sin BetPlay/Rushbet</span>` : ""}${p.kb === "revisar" ? revisar(p) : ""}</span>
       <span class="vflecha" aria-hidden="true">›</span>
     </button>`;
   return `<div class="titulo-seccion"><h2>En vivo</h2><small>${w.ts ? hace(w.ts) : ""}</small></div>
@@ -353,8 +367,24 @@ function cambiarVista(v) {
   if (i) i.value = "";
   filtrarVivo();
 }
-function enlazarVivo() {
+function enlazarVivo(w) {
   document.querySelectorAll(".filtro[data-vv]").forEach((b) => b.addEventListener("click", () => cambiarVista(b.dataset.vv)));
+  // Confirmar / No es: van dentro de la fila (que abre la ficha), así que frenan el clic antes de que llegue a ella
+  const responder = async (e) => {
+    const b = e.target.closest("[data-kb]");
+    if (!b || (e.type === "keydown" && e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault(); e.stopPropagation();
+    const p = (w?.partidos || []).find((x) => String(x.id) === b.dataset.id);
+    if (!p?.kbd || b.dataset.ocupado) return;
+    b.dataset.ocupado = "1"; b.textContent = "…";
+    const r = await conPin((pin) => post("/admin/kambi-alias", { pin, decision: b.dataset.kb, ...p.kbd }));
+    if (!r) { delete b.dataset.ocupado; b.textContent = b.dataset.kb === "si" ? "Confirmar" : "No es"; return; }
+    kbRespondidos.set(String(p.id), b.dataset.kb);
+    try { b.closest(".vrevisar").outerHTML = revisar(p); } catch (_) {}
+    toast(b.dataset.kb === "si" ? "Listo: desde el próximo ciclo entra con cuotas de BetPlay/Rushbet" : "Listo: esa pareja no se vuelve a sugerir");
+  };
+  $("#lista-vivo")?.addEventListener("click", responder, true);
+  $("#lista-vivo")?.addEventListener("keydown", responder, true);
   $("#buscar-vivo")?.addEventListener("input", (e) => { busquedaVivo = e.target.value; filtrarVivo(); });
   filtrarVivo();
 }
@@ -512,7 +542,7 @@ Object.assign(pantallas, {
     const abiertas = lista.filter((a) => a.resultado === "pendiente");
     const hoyStr = new Date().toDateString();
     const m = metricas(lista.filter((a) => new Date(a.ts).toDateString() === hoyStr));
-    setTimeout(() => { enlazarBotones(abiertas); enlazarFichas(abiertas, w); enlazarVivo(); $("#btn-push")?.addEventListener("click", activarPush); });
+    setTimeout(() => { enlazarBotones(abiertas); enlazarFichas(abiertas, w); enlazarVivo(w); $("#btn-push")?.addEventListener("click", activarPush); });
     const avisoPush = push.puede ? `<div class="tarjeta aviso-push"><p><b>Activa los avisos</b> para que te lleguen las alertas aunque tengas la app cerrada.</p><button class="btn" id="btn-push">Activar avisos</button></div>`
       : !push.activa ? `<div class="tarjeta aviso-push"><p>${esc(push.texto)}</p></div>` : "";
     return `${YO ? `<p class="saludo">Hola, ${esc(YO.nombre.split(" ")[0])}</p>` : ""}
