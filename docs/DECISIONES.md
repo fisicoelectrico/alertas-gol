@@ -303,3 +303,15 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 **Cambio.** `kambi.oferta()` marca `suspendido` cuando no hay mercado pero sí lo hubo en alguna lectura de ese partido en los últimos `kambi_suspension_min` minutos (10 por defecto, editable en config). En ese caso el aviso de córners espera al siguiente ciclo mientras el minuto siga dentro de la ventana del mercado; si la ventana termina sin mercado, se guarda con el motivo nuevo `casas_suspendido`. Un partido que nunca tuvo mercado de córners sigue cerrándose al instante como `casas_sin_mercado`.
 
 **Alcance.** En los últimos 2 días, 2 de 18 avisos "sin mercado" eran suspensiones (Al Ahli–Al Nassr y Septemvri–Lok. Plovdiv); los otros 16 nunca tuvieron el mercado en BetPlay/Rushbet.
+
+## 68. Push de córners y gol temprano también para los amigos, con formato claro y cuota mínima fija de 1,40 (20 nov 2026, a pedido de Fredy)
+
+**Pedido.** Que las push de córners y de gol temprano, que hasta hoy solo le llegaban al administrador, les lleguen también a los amigos (rol visor). El título dice la entrada sin jerga de laboratorio: "Más de 9,5 tiros de esquina · 1,72 · BetPlay" y "Más de 2,5 goles en el partido · 1,85 · BetPlay". Durante el fin de semana todo sale con cuota mínima 1,40; el lunes 23 se revisa.
+
+**Cambio.**
+- Config nueva: `lab_push_amigos` y `corners_push_amigos` (true = a todos; false = solo admin), `lab_umbral_fijo` y `corners_cuota_min_fija` (> 1 = cuota mínima fija en BetPlay/Rushbet; 0 = lo de antes: umbral automático de `lab_umbrales` para goles, cuota justa calculada para 0 córners y sin mínimo en los demás córners). Editables en Laboratorio y en Córners.
+- Cuerpo de la push con `lineasEntrada`: país, liga, partido y minuto, qué pasa (va 1 gol / no hay córners / el favorito pierde y van N córners), "Entrada sugerida", el monto de cada persona según Mi banca y las cuotas de BetPlay/Rushbet. El administrador recibe además la línea de la base y el mínimo usado.
+- Gol temprano: el mercado de las casas cuenta el partido completo, así que el cuerpo dice "va 1, faltan 2 goles más" para que nadie entienda "3 goles más".
+- El cierre de córners (Salió / No salió) les llega a los mismos que recibieron el aviso.
+
+**Ojo con el 1,40 en Más de 1,5.** El umbral automático subía por minuto si seguía 1 gol (al 75': 6 de 10, cuota justa 1,67). Con el 1,40 fijo, una entrada tardía de Más de 1,5 puede salir por debajo de la cuota justa. Se acepta por el fin de semana para juntar casos.

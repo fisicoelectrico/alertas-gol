@@ -91,7 +91,7 @@ export function textoMonto(d: Destinatario, cuota: number | null, casa: string |
 // Una línea por dato, en este orden: país, competencia, partido, mercado, monto (si la persona fijó banca y
 // meta en Mi banca) y casas con su cuota (de mayor a menor). El título dice qué clase de aviso es.
 export function lineasEntrada(o: {
-  pais: string | null; liga: string | null; partido: string; mercado: string;
+  pais: string | null; liga: string | null; partido: string; mercado: string; contexto?: string | null; etiqueta?: string;
   d: Destinatario; casas: { casa: string; c: number }[]; cuotaMonto: number | null; casaMonto: string | null; maxPct: number;
 }): string {
   const m = montoSugerido(o.d, o.cuotaMonto, o.maxPct);
@@ -99,7 +99,8 @@ export function lineasEntrada(o: {
     o.pais || null,
     o.liga || null,
     o.partido,
-    `Mercado: ${o.mercado}`,
+    o.contexto || null,
+    `${o.etiqueta ?? "Mercado"}: ${o.mercado}`,
     m ? `Entra ${pesos(m.monto)}${o.casaMonto ? ` en ${o.casaMonto}` : ""} a ${cuotaTxt(o.cuotaMonto)} → ganas ${pesos(m.gana)}${m.tope ? ` (tope ${o.maxPct} % de tu banca)` : ""}` : null,
     o.casas.length ? o.casas.map((x) => `${x.casa} ${cuotaTxt(x.c)}`).join(" · ") : null,
   ];

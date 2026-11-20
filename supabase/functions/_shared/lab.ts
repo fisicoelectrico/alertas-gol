@@ -17,7 +17,7 @@
 // probabilidad real baja; por eso la ventana es corta y la serie de cuotas queda guardada para medirlo.
 // =====================================================================
 import { sql, Config } from "./db.ts";
-import { lineasEntrada, notificar } from "./notificar.ts";
+import { cuotaTxt, lineasEntrada, notificar } from "./notificar.ts";
 import { Kambi, OfertaCasa, casasJson, pasaPush } from "./kambi.ts";
 
 type Log = (s: string) => void;
@@ -134,7 +134,9 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
     // El umbral vigente (de hoy, del tramo de minuto) manda; si no hay, el que tenía al abrirse.
     // lab_n_min se exige a la estrategia completa; el tramo ya castiga su muestra chica con Wilson.
     const { u, tramo } = umbralDe(U, o.estrategia, min);
-    const umbral = Number(u?.umbral ?? o.umbral);
+    // DECISIONES 68 (Fredy, 20 nov): lab_umbral_fijo > 1 reemplaza el automático (fin de semana: 1,40 para todo)
+    const fijo = Number(cfg.lab_umbral_fijo ?? 0);
+    const umbral = fijo > 1 ? fijo : Number(u?.umbral ?? o.umbral);
     if (o.alertada || !Number.isFinite(umbral) || mejor.c < umbral) continue;
     // Confirmación en dos fotos seguidas (18 nov): el feed a veces devuelve por un ciclo un tablero viejo
     // (Atenas-Fenix, 21': Más de 1,5 otra vez a 1,53). Solo se avisa si la foto anterior también pasaba el umbral.
@@ -152,20 +154,29 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
       // Con BetPlay/Rushbet, el monto sale de la más baja de ellas: es donde se entra de verdad.
       const validas = casas.filter((x: any) => x.c >= umbral);
       const baja = validas[validas.length - 1];
-      // Formato de Fredy (18 nov): país, competencia, partido, mercado, monto y casas; al final, el porqué
       const [paisL, ...resto] = String(o.liga ?? "").split(" · ");
+      // DECISIONES 68 (Fredy, 20 nov): formato para todos, sin "laboratorio" ni "gol temprano" en el título:
+      // "Más de 2,5 goles en el partido · 1,85 · BetPlay". El mercado de las casas cuenta el partido completo
+      // (incluye el gol que ya entró), por eso el cuerpo dice cuántos goles faltan.
+      const lineaTxt = coma(Number(o.linea), 1);
+      const va = Number(o.goles_gatillo);
+      const faltan = Math.floor(Number(o.linea)) + 1 - va;
+      const amigos = cfg.lab_push_amigos === true;
       push = await notificar((d) => ({
-        titulo: `🧪 ${L.titulo}`,
+        titulo: `Más de ${lineaTxt} goles en el partido · ${cuotaTxt(mejor.c)} · ${mejor.casa}`,
         cuerpo: lineasEntrada({
           pais: resto.length ? paisL : null, liga: resto.length ? resto.join(" · ") : (paisL || null),
           partido: `${o.local} ${f.goals.home}–${f.goals.away} ${o.visitante} · min ${min}`,
-          mercado: `Más de ${coma(Number(o.linea), 1)} goles (umbral ${coma(umbral)})`,
+          contexto: `Gol temprano: va ${va}, ${faltan === 1 ? "falta 1 gol más" : `faltan ${faltan} goles más`}.`,
+          etiqueta: "Entrada sugerida", mercado: `más de ${lineaTxt} goles en el partido`,
           // Fredy (20 nov): Wplay/Betano/Stake no le sirven; con BetPlay/Rushbet en la mano, solo ellas se muestran
           // (Flashscore queda en la serie como referencia, columna fs). Sin Kambi, se muestra lo de Flashscore.
           d, casas, cuotaMonto: baja.c, casaMonto: baja.casa, maxPct: Number(cfg.monto_max_pct ?? 10),
-        }) + `\nEn la base: ${u?.aciertos ?? "?"} de ${n}${tramo ? ` que seguían 1 gol al ${tramo}'` : ""} ${L.texto}.`,
+        }) + (d.rol === "admin"
+          ? `\nEn la base: ${u?.aciertos ?? "?"} de ${n}${tramo ? ` que seguían 1 gol al ${tramo}'` : ""} ${L.texto}. Mínimo ${coma(umbral)}.`
+          : ""),
         url: "./#laboratorio", tag: `lab-${o.estrategia}-${o.fixture_id}`,
-      }), { soloAdmin: true });
+      }), { soloAdmin: !amigos });
     }
     await sql`update futbol.lab_oportunidades set alertada = true, ts_alerta = now(), minuto_alerta = ${min},
                 cuota_alerta = ${mejor.c}, casa_alerta = ${mejor.casa}, push_enviados = ${push}, umbral = ${umbral},

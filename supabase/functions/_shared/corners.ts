@@ -32,7 +32,7 @@ import { sql, Config } from "./db.ts";
 import * as FS from "./flashscore.ts";
 import * as A from "./algoritmo.ts";
 import { ApiFootball } from "./apifootball.ts";
-import { notificar, cuotaTxt, ligaFS } from "./notificar.ts";
+import { notificar, cuotaTxt, ligaFS, lineasEntrada } from "./notificar.ts";
 import { umbrales } from "./lab.ts";
 import { fotoReciente, ofertaCorners } from "./cornersapi.ts";
 import { Kambi, OfertaCasa, casasJson, pasaPush } from "./kambi.ts";
@@ -122,7 +122,7 @@ export async function cicloCorners(args: {
 }) {
   const { cfg, vivosFS, conocidos, api, log, fotoForzada, kambi } = args;
   let forzadaUsada = false;
-  await resolverCorners(vivosFS, log, cfg.corners_push !== false);
+  await resolverCorners(vivosFS, log, cfg.corners_push !== false, cfg.corners_push_amigos === true);
   if (cfg.corners_activo !== true) return;
 
   const P = parametrosCorners(cfg);
@@ -298,30 +298,39 @@ export async function cicloCorners(args: {
     if (es1T(mercado)) avisados1T.add(p.id);
     if (!al) continue;
 
-    // Sin la línea exacta, las alternativas del mismo tiempo (visto en el 1T: "más de 2" y "exactamente 2").
-    // La fuente de la cuota no se muestra (Fredy, 15 nov).
-    const alt = cuota || cuotaOfrecida ? null : alternativas(vistos, alcance, total + objetivo);
-    // Con BetPlay/Rushbet se muestra cada casa (la cuota guardada es la más baja, la prudente para el monto)
-    const precio = ofK?.estado === "ofrece" ? `, paga ${ofK.casas.map((x) => `${x.casa} ${cuotaTxt(x.c)}`).join(" · ")}`
-      : ofK?.cercana ? `. No está esa línea; ofrecen más de ${coma(ofK.cercana.linea)}: ${ofK.cercana.casas.map((x) => `${x.casa} ${cuotaTxt(x.c)}`).join(" · ")}`
-      : cuota ? `, paga ${cuotaTxt(cuota)}`
-      : cuotaOfrecida && lineaOfrecida ? `. No está esa línea; la casa ofrece más de ${coma(lineaOfrecida)} a ${cuotaTxt(cuotaOfrecida)}`
-      : alt ? `. Sin esa línea: ${alt}` : "";
-    const cuerpo = mercado === "c1t_cero20"
-      ? `Córners 1T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. Sin córners todavía. Entrada: más de ${coma(linea)} córners en el 1T${precio}.` +
-        await cuotaMinimaCero(cfg, log)
-      : mercado === "c1t_uno"
-      ? `Córners 1T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. Va 1 córner. Todavía se puede entrar: más de ${coma(linea)} córners en el 1T (falta 1)${precio}.`
-      : `Córners 2T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. ${fav} es favorito y va perdiendo. Van ${total} córners. Entrada: más de ${coma(linea)}${precio}.`;
     // Regla de Fredy (19 nov): sin cuota de córners para ese tiempo NO hay push. El aviso igual queda guardado.
     // Con BetPlay/Rushbet (DECISIONES 57): tienen que tener la línea y, si el mercado tiene cuota mínima
     // calculada (0 córners → más de 1,5 / 2,5 en el 1T), pagarla. Si no, no es una entrada real.
+    // DECISIONES 68 (Fredy, 20 nov): corners_cuota_min_fija > 1 es la cuota mínima de los tres mercados (fin de
+    // semana: 1,40). Con 0 vuelve lo de antes: 0 córners usa la cuota justa calculada y los demás no tienen mínimo.
+    const fija = Number(cfg.corners_cuota_min_fija ?? 0);
+    const minimo = fija > 1 ? fija : mercado === "c1t_cero20" ? await umbralCero(cfg, linea, log) : null;
     let gateK = { sale: true, motivo: null as string | null };
-    if (ofK) gateK = pasaPush(cfg, ofK, false, mercado === "c1t_cero20" ? await umbralCero(cfg, linea, log) : null);
-    const n = cfg.corners_push === false || hayMercado !== true || !gateK.sale ? 0 : await notificar({
-      titulo: ligaFS(p.liga).txt,
-      cuerpo, url: `./#corners/${al.id}`, tag: `corner-${al.id}`,
-    }, { soloAdmin: true });
+    if (ofK) gateK = pasaPush(cfg, ofK, false, minimo);
+    else if (minimo != null && cuota != null && cuota < minimo) gateK = { sale: false, motivo: "bajo_umbral" };
+    // Formato para todos (DECISIONES 68): "Más de 9,5 tiros de esquina · 1,72 · BetPlay"; cuerpo con país, liga,
+    // partido y minuto, qué pasa en el partido, la entrada sugerida, las casas y el monto de cada persona.
+    const casasP = ofK?.estado === "ofrece" ? ofK.casas : cuota ? [{ casa: "", c: cuota }] : [];
+    const validasC = minimo != null ? casasP.filter((x) => x.c >= minimo) : casasP;
+    const bajaC = validasC[validasC.length - 1] ?? casasP[casasP.length - 1];
+    const mejorC = casasP[0];
+    const enTiempo = es1T(mercado) ? " en el 1.er tiempo" : " en el partido";
+    const L = ligaFS(p.liga);
+    const contexto = mercado === "c1t_cero20" ? "Todavía no hay córners en el partido."
+      : mercado === "c1t_uno" ? "Va 1 córner: falta 1 para ganar."
+      : `${fav} es favorito, va perdiendo y van ${total} córners.`;
+    const amigosC = cfg.corners_push_amigos === true;
+    const n = cfg.corners_push === false || hayMercado !== true || !gateK.sale || !mejorC ? 0 : await notificar((d) => ({
+      titulo: `Más de ${coma(linea)} tiros de esquina${es1T(mercado) ? " en el 1T" : ""} · ${cuotaTxt(mejorC.c)}${mejorC.casa ? ` · ${mejorC.casa}` : ""}`,
+      cuerpo: lineasEntrada({
+        pais: L.pais, liga: L.liga || null,
+        partido: `${p.local} ${p.gl}–${p.gv} ${p.visitante} · min ${minuto}`,
+        contexto, etiqueta: "Entrada sugerida", mercado: `más de ${coma(linea)} tiros de esquina${enTiempo}`,
+        d, casas: casasP.filter((x) => x.casa), cuotaMonto: bajaC?.c ?? null, casaMonto: bajaC?.casa || null,
+        maxPct: Number(cfg.monto_max_pct ?? 10),
+      }) + (d.rol === "admin" && minimo != null ? `\nMínimo ${cuotaTxt(minimo)}.` : ""),
+      url: `./#corners/${al.id}`, tag: `corner-${al.id}`,
+    }), { soloAdmin: !amigosC });
     await sql`update futbol.alertas_corners set push_enviados = ${n} where id = ${al.id}`;
     log(`córners: aviso ${mercado} ${p.local}-${p.visitante} min ${minuto}, línea ${linea}, cuota ${cuota ?? motivoSinCuota}${n ? "" : ` (sin push${gateK.motivo ? `: ${gateK.motivo}` : ""})`}`);
   }
@@ -375,7 +384,7 @@ async function chequeo(p: FS.PartidoFS, mercado: Mercado, minuto: number, ck: [n
  * Si el partido desaparece de la lista (se cambió el día UTC) se busca en la de ayer; a las 4 h sin
  * desenlace se anula (aplazado, suspendido o sin datos), y no cuenta para el acierto.
  */
-async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void, conPush: boolean) {
+async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void, conPush: boolean, amigos: boolean) {
   const pend = await sql`select id, mercado, fs_id, liga, local, visitante, corners_local + corners_visitante as ck0, objetivo, cuota, ts, push_enviados
                          from futbol.alertas_corners where resultado = 'pendiente' order by ts limit 20`;
   if (!pend.length) return;
@@ -420,7 +429,7 @@ async function resolverCorners(vivosFS: FS.PartidoFS[], log: (s: string) => void
       titulo: ligaFS(a.liga).txt,
       cuerpo: `${gano ? "✅ Salió" : "❌ No salió"}, córners${tiempo}: ${a.local} ${p.gl}–${p.gv} ${a.visitante}: ${ahora} córners${tiempo} (necesitaba ${meta})${gano && em.minuto ? `, al ${em.minuto}'` : ""}.${a.cuota ? ` Cuota ${cuotaTxt(a.cuota)}.` : ""}`,
       url: `./#corners/${a.id}`, tag: `corner-${a.id}`,
-    }, { soloAdmin: true });
+    }, { soloAdmin: !amigos });
     log(`córners: alerta ${a.id} ${gano ? "acierto" : "fallo"} (${ahora}/${meta})`);
   }
 }

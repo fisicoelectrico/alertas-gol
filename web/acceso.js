@@ -875,6 +875,9 @@ Object.assign(pantallas, {
       <div class="tarjeta">
         ${sw("lab_activo", "<b>Laboratorio de goles</b>", "Detecta, vigila la cuota y resuelve (gratis, con Flashscore)")}
         ${sw("lab_push", "Avisos al celular", `Cuando una casa paga el umbral o más (avisan: ${avisan.map((e) => NOM[e] || e).join(", ") || "ninguna"})`)}
+        ${sw("lab_push_amigos", "Avisos también a los amigos", "Apagado: solo le llegan al administrador")}
+        <div class="campo"><label for="lb-lab_umbral_fijo">Cuota mínima fija<small>BetPlay o Rushbet deben pagarla para que salga la push. 0 = umbral automático de la base</small></label>
+          <input id="lb-lab_umbral_fijo" type="number" step="0.01" min="0" inputmode="decimal" data-lab="lab_umbral_fijo" value="${esc(P.lab_umbral_fijo ?? 0)}" style="max-width:80px"></div>
         ${sw("fs_vivo_activo", "Cuotas en vivo", "Apagado: no se fotografía ninguna cuota (la alerta usa API-Football)")}
         ${campo("lab_gt_minuto", "Gol temprano hasta el minuto", "El primer gol debe caer hasta aquí")}
         ${campo("lab_gt_ventana_min", "Vigilar la cuota (min)", "Minutos después del gol; 90 = hasta el 2.º gol o el final")}
@@ -988,6 +991,7 @@ Object.assign(pantallas, {
     return `<div class="tarjeta">
         ${sw("corners_activo", "<b>Córners (laboratorio)</b>", `Versión ${esc(P.corners_version || "c1")} · detecta, guarda y resuelve el acierto con Flashscore (gratis)`)}
         ${sw("corners_push", "Avisos al celular", "Apagado: sigue juntando datos en silencio")}
+        ${sw("corners_push_amigos", "Avisos también a los amigos", "Apagado: solo le llegan al administrador")}
         ${sw("corners_api_fotos", "Fotos de cuotas (API)", `1 consulta trae las cuotas de córners de todos los partidos en vivo, repartidas en el horario · hoy ${r.fotos?.consultas_hoy ?? 0}/${esc(P.corners_api_fotos_max_dia ?? 85)} consultas, ${r.fotos?.fotos_hoy ?? 0} fotos, ${r.fotos?.con_1t_hoy ?? 0} filas con córners del 1T`)}
         <p class="nota" style="margin:4px 0">Sin cuota de córners no llega push: el aviso se guarda igual, pero el acierto solo cuenta los que tuvieron cuota.</p>
         <div class="botones"><button class="btn sec" id="btn-corners-sw">Guardar interruptores</button></div>
@@ -1001,6 +1005,8 @@ Object.assign(pantallas, {
         ${campo("corners_2t_min_desde", "2T desde el minuto", "Desde cuándo se revisa si el favorito pierde")}
         ${campo("corners_2t_min_hasta", "2T hasta el minuto", "")}
         ${campo("corners_objetivo", "Córners más que se buscan", "La línea es córners actuales + este número − 0,5")}
+        <div class="campo"><label for="ck-corners_cuota_min_fija">Cuota mínima fija<small>Para los tres mercados de córners. 0 = la calculada (solo 0 córners) o sin mínimo</small></label>
+          <input id="ck-corners_cuota_min_fija" type="number" step="0.01" min="0" inputmode="decimal" data-ck="corners_cuota_min_fija" value="${esc(P.corners_cuota_min_fija ?? 0)}" style="max-width:80px"></div>
         ${campo("corners_api_fotos_max_dia", "Consultas de API por día (fotos)", "Tope de las fotos de cuotas; siempre dentro del presupuesto general")}
         <p class="nota">Cambiar minutos u objetivo abre una versión nueva (c1 → c2) para no mezclar resultados. El tope de consultas y los interruptores no cambian la versión.</p>
         <div class="botones"><button class="btn" id="btn-corners">Guardar</button></div>
