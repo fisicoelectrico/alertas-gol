@@ -24,7 +24,8 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 
 /**
- * Widget "N en vivo · M candidatos" con la lista de partidos.
+ * Widget v2 (20 nov 2026): "N favoritos perdiendo" con su lista y, abajo, el estado de BetPlay y Rushbet
+ * (LED verde/rojo). Antes era "N en vivo · M candidatos" con todos los partidos.
  *
  * Cómo funciona:
  *  1. Android llama onUpdate() al poner el widget (y cada 30 min como respaldo, ver goles_widget.xml).
@@ -140,13 +141,13 @@ public class GolesWidget extends AppWidgetProvider {
 
     static RemoteViews pintar(Context ctx, JSONObject j, boolean usarLista) throws Exception {
         RemoteViews rv = base(ctx);
-        int vivos = j.optInt("vivos"), cand = j.optInt("candidatos");
-        rv.setTextViewText(R.id.vivos, String.valueOf(vivos));
-        rv.setTextViewText(R.id.candidatos, String.valueOf(cand));
-        rv.setTextColor(R.id.candidatos, cand > 0 ? 0xFFFFC247 : 0xFFE8F0EA);
+        // Widget v2 (20 nov): solo favoritos perdiendo ("perdiendo") y el estado de BetPlay/Rushbet ("casas")
+        JSONArray ps = j.optJSONArray("perdiendo");
+        if (ps == null) ps = new JSONArray();
+        rv.setTextViewText(R.id.vivos, String.valueOf(ps.length()));
         rv.setTextViewText(R.id.hora, hace(j.optString("ts", null)));
+        casas(rv, j.optJSONArray("casas"));
 
-        JSONArray ps = j.optJSONArray("partidos");
         int n = ps == null ? 0 : ps.length();
         rv.setViewVisibility(R.id.vacio, n == 0 ? View.VISIBLE : View.GONE);
 
@@ -176,21 +177,53 @@ public class GolesWidget extends AppWidgetProvider {
         return rv;
     }
 
+    /** LED verde = el servidor leyó la lista en vivo de esa casa hace 3 min o menos; rojo = no. */
+    static void casas(RemoteViews rv, JSONArray cs) {
+        int[][] ids = { { R.id.led_betplay, R.id.estado_betplay }, { R.id.led_rushbet, R.id.estado_rushbet } };
+        String[] nombres = { "BetPlay", "Rushbet" };
+        for (int i = 0; i < 2; i++) {
+            JSONObject c = null;
+            for (int k = 0; cs != null && k < cs.length(); k++) {
+                JSONObject x = cs.optJSONObject(k);
+                if (x != null && nombres[i].equals(x.optString("casa"))) c = x;
+            }
+            boolean ok = c != null && c.optBoolean("ok");
+            String txt;
+            if (c == null) txt = "sin dato";
+            else if (ok) txt = "en línea" + (c.isNull("en_vivo") ? "" : " · " + c.optInt("en_vivo") + " en vivo");
+            else if (!c.isNull("status") && c.optInt("status") != 200) txt = "error " + c.optInt("status");
+            else if (!c.isNull("hace_min")) txt = "sin datos hace " + minutos(c.optInt("hace_min"));
+            else txt = "sin datos";
+            rv.setTextColor(ids[i][0], ok ? 0xFF3DDC84 : 0xFFFF5A4E);
+            rv.setTextViewText(ids[i][1], txt);
+            rv.setTextColor(ids[i][1], ok ? 0xFF9DB2A6 : 0xFFFF8A80);
+        }
+    }
+
+    static String minutos(int m) {
+        return m < 60 ? m + " min" : m < 1440 ? (m / 60) + " h" : (m / 1440) + " d";
+    }
+
+    static String partido(JSONObject p) {
+        String fav = p.optString("fav", "");
+        return p.optString("l") + ("home".equals(fav) ? " ★" : "") + "  " + p.optInt("gl") + "–" + p.optInt("gv") + "  "
+                + ("away".equals(fav) ? "★ " : "") + p.optString("v");
+    }
+
     static RemoteViews fila(Context ctx, JSONObject p) {
         RemoteViews f = new RemoteViews(ctx.getPackageName(), R.layout.fila);
-        f.setTextViewText(R.id.minuto, minuto(p));
-        String fav = p.optString("fav", "");
-        f.setTextViewText(R.id.local, p.optString("l") + ("home".equals(fav) ? " ★" : ""));
-        f.setTextViewText(R.id.marcador, p.optInt("gl") + "–" + p.optInt("gv"));
-        f.setTextViewText(R.id.visitante, ("away".equals(fav) ? "★ " : "") + p.optString("v"));
         boolean c = p.optBoolean("c");
+        f.setTextViewText(R.id.minuto, minuto(p));
+        f.setTextColor(R.id.minuto, c ? 0xFFFFC247 : 0xFF9DB2A6);
+        f.setTextViewText(R.id.partido, partido(p));
+        f.setTextViewText(R.id.liga, p.optString("liga", "") + (c ? " · candidato" : ""));
         f.setInt(R.id.fila, "setBackgroundResource", c ? R.drawable.fila_candidato : 0);
         f.setOnClickFillInIntent(R.id.fila, new Intent());
         return f;
     }
 
     static String texto(JSONObject p) {
-        return (p.optBoolean("c") ? "● " : "") + minuto(p) + "  " + p.optString("l") + " " + p.optInt("gl") + "–" + p.optInt("gv") + " " + p.optString("v");
+        return (p.optBoolean("c") ? "● " : "") + minuto(p) + "  " + partido(p);
     }
 
     static String minuto(JSONObject p) {

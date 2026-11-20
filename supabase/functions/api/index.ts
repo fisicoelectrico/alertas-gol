@@ -198,7 +198,42 @@ async function widget() {
   })).sort((a: any, b: any) => Number(b.c) - Number(a.c) || (b.m ?? -1) - (a.m ?? -1));
   // vivos se cuenta sobre la lista ya filtrada (el conteo guardado incluye todas las ligas)
   const vivos = partidos.filter((p: any) => ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(p.e)).length;
-  return { ts: u.ts, vivos, candidatos: partidos.filter((p: any) => p.c).length, partidos };
+  // Widget v2 (20 nov, Fredy): solo favoritos perdiendo + estado de BetPlay y Rushbet. Las claves viejas
+  // se quedan para que el APK anterior siga funcionando.
+  const perdiendo = partidos.filter((p: any) => ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(p.e) &&
+    ((p.fav === "home" && p.gl < p.gv) || (p.fav === "away" && p.gv < p.gl)))
+    .map((p: any) => ({ ...p, liga: ligaCorta(p.liga) }));
+  return { ts: u.ts, vivos, candidatos: partidos.filter((p: any) => p.c).length, partidos, perdiendo, casas: await casasKambi() };
+}
+
+/** "COLOMBIA: Primera A - Clausura" → "Colombia · Primera A". */
+function ligaCorta(liga: unknown): string {
+  const t = String(liga ?? "");
+  const i = t.indexOf(": ");
+  const pais = i > 0 ? t.slice(0, i).toLowerCase().replace(/(^|[\s-])\p{L}/gu, (m) => m.toUpperCase()) : "";
+  const resto = (i > 0 ? t.slice(i + 2) : t).split(" - ")[0].trim();
+  return pais ? `${pais} · ${resto}` : resto;
+}
+
+/** Estado de BetPlay y Rushbet para el widget: en línea si el cron trajo su lista en vivo (200) hace ≤ 3 min. */
+async function casasKambi() {
+  const out: { casa: string; ok: boolean; hace_min: number | null; en_vivo: number | null; status: number | null }[] = [];
+  let filas: any[] = [];
+  try { filas = await sql`select casa, ts, status_code, content from futbol.kambi_listas(1440)`; } catch (_e) { /* sin cola */ }
+  for (const casa of ["betplay", "rushbet"]) {
+    const f = filas.find((x) => x.casa === casa);
+    const hace = f ? Math.floor((Date.now() - new Date(f.ts).getTime()) / 60000) : null;
+    let enVivo: number | null = null;
+    if (f?.status_code === 200) {
+      try {
+        enVivo = (JSON.parse(f.content).events ?? []).filter((e: any) =>
+          !/e-?sports?|esoccer|cyber|virtual/i.test(`${e.event?.group ?? ""} ${e.event?.name ?? ""}`)).length;
+      } catch (_e) { enVivo = null; }
+    }
+    out.push({ casa: casa === "betplay" ? "BetPlay" : "Rushbet", ok: f?.status_code === 200 && hace !== null && hace <= 3, hace_min: hace, en_vivo: enVivo,
+              status: f?.status_code ?? null });
+  }
+  return out;
 }
 
 // Agenda de hoy y mañana con sus favoritos (DECISIONES 42). Sale de Flashscore: la lista del día y las
