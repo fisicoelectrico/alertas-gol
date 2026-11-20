@@ -240,6 +240,18 @@ export async function cicloCorners(args: {
           continue;
         }
       }
+      // DECISIONES 71 (Oss–Roda, 20 nov): la cuota del 2T sube minuto a minuto (1,36 al 72', 1,45 al 74', 1,72 al
+      // 78'). Antes el aviso se cerraba en el primer minuto de la ventana y, si BetPlay/Rushbet aún pagaban menos
+      // que el mínimo, no salía push nunca. Ahora se espera mientras siga la ventana (corners_espera_umbral=false
+      // vuelve a lo de antes); en el último minuto se guarda igual, sin push, para no perder el dato.
+      if (ofK?.estado === "ofrece" && cfg.corners_espera_umbral !== false) {
+        const hasta = mercado === "c1t_cero20" ? P.t1_hasta : mercado === "c1t_uno" ? P.t1u_hasta : P.t2_hasta;
+        const minE = await cuotaMinima(cfg, mercado, linea, log);
+        if (minuto < hasta && pasaPush(cfg, ofK, false, minE).motivo === "casas_bajo_umbral") {
+          log(`córners: ${mercado} ${p.local}-${p.visitante} min ${minuto}: cuota ${ofK.casas[0].c} bajo el mínimo ${minE}, espera`);
+          continue;
+        }
+      }
       consultada = !!ofK && ofK.estado !== "kambi_caido";
       hayMercado = ofK ? (ofK.estado === "ofrece" || ofK.estado === "sin_linea") : null;
       if (ofK?.estado === "ofrece") { cuota = ofK.casas[ofK.casas.length - 1].c; mercadoNombre = `Kambi: ${ofK.casas.map((x) => x.casa).join(", ")}`; }
@@ -303,8 +315,7 @@ export async function cicloCorners(args: {
     // calculada (0 córners → más de 1,5 / 2,5 en el 1T), pagarla. Si no, no es una entrada real.
     // DECISIONES 68 (Fredy, 20 nov): corners_cuota_min_fija > 1 es la cuota mínima de los tres mercados (fin de
     // semana: 1,40). Con 0 vuelve lo de antes: 0 córners usa la cuota justa calculada y los demás no tienen mínimo.
-    const fija = Number(cfg.corners_cuota_min_fija ?? 0);
-    const minimo = fija > 1 ? fija : mercado === "c1t_cero20" ? await umbralCero(cfg, linea, log) : null;
+    const minimo = await cuotaMinima(cfg, mercado, linea, log);
     let gateK = { sale: true, motivo: null as string | null };
     if (ofK) gateK = pasaPush(cfg, ofK, false, minimo);
     else if (minimo != null && cuota != null && cuota < minimo) gateK = { sale: false, motivo: "bajo_umbral" };
@@ -331,9 +342,16 @@ export async function cicloCorners(args: {
       }) + (d.rol === "admin" && minimo != null ? `\nMínimo ${cuotaTxt(minimo)}.` : ""),
       url: `./#corners/${al.id}`, tag: `corner-${al.id}`,
     }), { soloAdmin: !amigosC });
-    await sql`update futbol.alertas_corners set push_enviados = ${n} where id = ${al.id}`;
+    await sql`update futbol.alertas_corners set push_enviados = ${n},
+              nota = coalesce(nota, ${n ? null : gateK.motivo}) where id = ${al.id}`;
     log(`córners: aviso ${mercado} ${p.local}-${p.visitante} min ${minuto}, línea ${linea}, cuota ${cuota ?? motivoSinCuota}${n ? "" : ` (sin push${gateK.motivo ? `: ${gateK.motivo}` : ""})`}`);
   }
+}
+
+/** Cuota mínima de la push de córners: la fija (corners_cuota_min_fija > 1) o, en 0 córners, la calculada. */
+async function cuotaMinima(cfg: Config, mercado: string, linea: number, log: (s: string) => void): Promise<number | null> {
+  const fija = Number(cfg.corners_cuota_min_fija ?? 0);
+  return fija > 1 ? fija : mercado === "c1t_cero20" ? await umbralCero(cfg, linea, log) : null;
 }
 
 /**

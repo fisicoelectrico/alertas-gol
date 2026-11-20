@@ -335,3 +335,11 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 **Caso.** Primera alerta de Oss 1-0 Roda (min 69) después de confirmar el alias: la push decía "Entra $7.100 en Rushbet a 1,56" con BetPlay pagando 1,58. Desde DECISIONES 57 el monto se calculaba con la casa más baja (criterio conservador: si entras donde paga más, ganas un poco más de la meta). Pero leído en la push, "en Rushbet" suena a recomendación de dónde entrar, y ahí pierdes cuota.
 
 **Cambio.** `lineasEntrada` toma la casa con la cuota más alta de la lista de la push (BetPlay/Rushbet) para el monto y para el texto "Entra $X en <casa> a <cuota>". Aplica a la alerta principal, gol temprano y córners (todas pasan por esa función). La decisión de si sale la push (umbral) no cambia: ya usaba la mejor de las dos.
+
+## 71. Córners: si BetPlay/Rushbet pagan menos que el mínimo, el aviso espera dentro de la ventana (20 nov 2026, Fredy por Oss–Roda)
+
+**Caso.** TOP Oss 1-0 Roda JC (favorito Roda, 2 + 4 córners). El aviso `c2t_fav77` se abrió al 72' (alerta 254) con más de 7,5 córners a 1,37 BetPlay / 1,36 Rushbet, bajo el mínimo fijo de 1,40 (DECISIONES 68) → sin push. El chequeo quedó cerrado y el partido no se volvió a mirar, aunque la cuota subió: 1,46 al 74', 1,54 al 76', 1,74 al 78'. El alias (DECISIONES 69) y las cuotas de Kambi funcionaban bien; el fallo era de diseño.
+
+**Cambio.** Si BetPlay/Rushbet ofrecen la línea pero ninguna paga el mínimo, el aviso no se guarda todavía: se vuelve a mirar en cada ciclo mientras siga la ventana (igual que con el mercado suspendido, DECISIONES 67). En el último minuto de la ventana se guarda igual, sin push, para no perder el dato del laboratorio. El motivo de una push que no salió queda en `alertas_corners.nota` (p. ej. `casas_bajo_umbral`). Llave `corners_espera_umbral` (sin fila = encendida; `false` vuelve a lo de antes).
+
+**Efecto en los datos.** El minuto y los córners guardados del aviso pasan a ser los del momento en que la cuota llega al mínimo (la entrada real), no los del primer minuto de la ventana.
