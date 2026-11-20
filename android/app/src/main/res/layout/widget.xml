@@ -28,7 +28,8 @@
         android:layout_weight="1" android:text="Ningún favorito va perdiendo ahora" android:textColor="#9DB2A6"
         android:textSize="12sp" android:visibility="gone" />
 
-    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#25382F"
+    <!-- Separador: FrameLayout y no View, porque los widgets (RemoteViews) no aceptan View suelto -->
+    <FrameLayout android:layout_width="match_parent" android:layout_height="1dp" android:background="#25382F"
         android:layout_marginTop="6dp" android:layout_marginBottom="6dp" />
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
