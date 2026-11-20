@@ -8,11 +8,15 @@
 //  2. Recordatorios: hasta recordatorios_max (4), cada recordatorio_cada_min (5) minutos, mientras la alerta
 //                    siga abierta, sin gol y antes de recordatorio_minuto_tope. No le llegan a quien ya marcó
 //                    Entré o No entro. Son informativos: solo suben alertas.recordatorios.
+//                    Fredy (20 nov, DECISIONES 59): solo para alertas cuya push SÍ salió (push_enviados > 0 y sin
+//                    motivo_sin_push) y solo con la cuota real de BetPlay/Rushbet leída en los últimos minutos, con
+//                    el mismo marcador. Si Kambi no la tiene en ese momento, el recordatorio espera (no se envía).
 //  3. Gol:           "¡Gooooool de CRB al 88'!" apenas el marcador cambia (sin esperar el final).
 //  4. Resultado:     si no hubo gol, "No hubo gol" al resolver. Si hubo y ya se avisó, no se repite.
 // =====================================================================
 import { sql, Config } from "./db.ts";
 import { cuotaTxt, Destinatario, ligaTxt, lineasEntrada, notificar, pesos } from "./notificar.ts";
+import { claveLinea, NOMBRE_CASA } from "./kambi.ts";
 
 const favDe = (a: any): string =>
   a.favorito === "home" ? a.local : a.favorito === "away" ? a.visitante : a.local;
@@ -79,6 +83,7 @@ export async function avisosEnVivo(cfg: Config, log: (s: string) => void) {
            p.goles_local as gl, p.goles_visitante as gv, l.nombre as liga, l.pais
     from futbol.alertas a join futbol.partidos p using (fixture_id) left join futbol.ligas l on l.id = p.liga_id
     where a.resultado = 'pendiente' and a.gol_avisado is null and coalesce(l.habilitada, true)
+      and coalesce(a.push_enviados, 0) > 0   -- si la alerta no salió (sin BetPlay/Rushbet), tampoco su gol
       and p.goles_local + p.goles_visitante > a.goles_al_alertar and a.ts > now() - interval '4 hours'`;
   for (const a of conGol) {
     // Se marca primero (atómico): si dos ciclos coinciden, solo uno envía
@@ -98,7 +103,7 @@ export async function avisosEnVivo(cfg: Config, log: (s: string) => void) {
   const tope = Number(cfg.recordatorio_minuto_tope ?? 85);
   if (!max) return;
   const abiertas = await sql`
-    select a.id, a.cuota, a.recordatorios, p.local, p.visitante, p.favorito, p.minuto, l.nombre as liga, l.pais,
+    select a.id, a.fixture_id, a.linea_over, a.goles_al_alertar, a.cuota, a.recordatorios, p.local, p.visitante, p.favorito, p.minuto, l.nombre as liga, l.pais,
            p.goles_local as gl, p.goles_visitante as gv,
            (select s.cuota_over from futbol.snapshots s where s.fixture_id = a.fixture_id and s.ts > a.ts and s.cuota_over is not null
              order by s.ts desc limit 1) as cuota_actual,
@@ -106,18 +111,35 @@ export async function avisosEnVivo(cfg: Config, log: (s: string) => void) {
              order by s.ts desc limit 1) as dominancia
     from futbol.alertas a join futbol.partidos p using (fixture_id) left join futbol.ligas l on l.id = p.liga_id
     where a.resultado = 'pendiente' and a.gol_avisado is null and coalesce(l.habilitada, true)
+      and coalesce(a.push_enviados, 0) > 0 and a.motivo_sin_push is null
       and p.goles_local + p.goles_visitante = a.goles_al_alertar
       and p.estado in ('1H', '2H') and coalesce(p.minuto, 0) < ${tope}
       and a.recordatorios < ${max} and a.ts > now() - interval '3 hours'
       and a.ts + make_interval(mins => (a.recordatorios + 1) * ${cada}) <= now() + interval '20 seconds'`;
+  const exigeKambi = cfg.kambi_activo !== false && cfg.kambi_exigir !== false;
+  const vig = Math.max(Number(cfg.kambi_vigencia_min ?? 5), 1);
   for (const a of abiertas) {
     const n0 = Number(a.recordatorios);
+    // Cuota real de BetPlay/Rushbet de ahora (tabla que llena el cron futbol-kambi), mismo marcador
+    let casasTxt = "", cuotaRec: number | null = null;
+    if (exigeKambi) {
+      const k = claveLinea(a.linea_over);
+      const filas = await sql`select distinct on (casa) casa, (goles ->> ${k})::numeric as c from futbol.cuotas_casa
+                              where fixture_id = ${a.fixture_id} and ts > now() - make_interval(mins => ${vig})
+                                and goles_local + goles_visitante = ${a.goles_al_alertar}
+                              order by casa, ts desc`;
+      const conCuota = filas.filter((f: any) => f.c != null && Number(f.c) > 1)
+        .map((f: any) => ({ casa: NOMBRE_CASA[f.casa] ?? f.casa, c: Number(f.c) })).sort((x: any, y: any) => y.c - x.c);
+      if (!conCuota.length) { log(`recordatorio alerta ${a.id} en espera: BetPlay/Rushbet sin esa línea ahora`); continue; }
+      cuotaRec = conCuota[0].c;
+      casasTxt = ` (${conCuota.map((x: any) => `${x.casa} ${cuotaTxt(x.c)}`).join(" · ")})`;
+    }
     const ok = await sql`update futbol.alertas set recordatorios = recordatorios + 1 where id = ${a.id} and recordatorios = ${n0} returning id`;
     if (!ok.length) continue;
     const ataca = Number(a.dominancia) >= Number(cfg.dominancia_min ?? 1.3);
     const n = await notificar({
       titulo: ligaTxt(a.pais, a.liga),
-      cuerpo: `Sigue abierta, minuto ${a.minuto ?? "–"}: ${a.local} ${a.gl}–${a.gv} ${a.visitante}.${ataca ? ` ${favDe(a)} sigue atacando.` : ""} Otro gol paga ${cuotaTxt(a.cuota_actual ?? a.cuota)}. (Recordatorio ${n0 + 1} de ${max})`,
+      cuerpo: `Sigue abierta, minuto ${a.minuto ?? "–"}: ${a.local} ${a.gl}–${a.gv} ${a.visitante}.${ataca ? ` ${favDe(a)} sigue atacando.` : ""} Otro gol paga ${cuotaTxt(cuotaRec ?? a.cuota_actual ?? a.cuota)}${casasTxt}. (Recordatorio ${n0 + 1} de ${max})`,
       url: "./#ahora", tag: `alerta-${a.id}`, alerta_id: a.id, acciones: true,
     }, { alertaId: a.id, omitirMarcados: true });
     log(`recordatorio ${n0 + 1}/${max} alerta ${a.id} push=${n}`);
@@ -130,8 +152,10 @@ export async function avisoResultado(
   r: { resultado: "acierto" | "fallo"; minuto_gol: number | null; lado_gol: "favorito" | "rival" | null; gl90: number; gv90: number },
   local: string, visitante: string, favorito: string | null,
 ) {
-  const [lg] = await sql`select l.nombre as liga, l.pais from futbol.alertas x join futbol.partidos p using (fixture_id)
+  const [lg] = await sql`select l.nombre as liga, l.pais, x.push_enviados from futbol.alertas x join futbol.partidos p using (fixture_id)
                          left join futbol.ligas l on l.id = p.liga_id where x.id = ${a.id}`;
+  // La alerta no salió como push (p. ej. BetPlay/Rushbet sin el mercado): tampoco se avisa su resultado
+  if (!(Number(lg?.push_enviados) > 0)) return 0;
   const base = { id: a.id, cuota: a.cuota, local, visitante, favorito, liga: lg?.liga ?? null, pais: lg?.pais ?? null };
   if (r.resultado === "acierto") {
     if (a.gol_avisado) return 0;    // ya se avisó el gol en vivo: no se repite
