@@ -18,7 +18,7 @@ const favDe = (a: any): string =>
   a.favorito === "home" ? a.local : a.favorito === "away" ? a.visitante : a.local;
 
 export async function avisoAlerta(alertaId: number) {
-  const [a] = await sql`select a.id, a.fixture_id, a.linea_over, a.minuto, a.cuota, a.marcador, p.local, p.visitante, p.favorito, l.nombre as liga, l.pais
+  const [a] = await sql`select a.id, a.fixture_id, a.cuota_casas, a.linea_over, a.minuto, a.cuota, a.marcador, p.local, p.visitante, p.favorito, l.nombre as liga, l.pais
                         from futbol.alertas a join futbol.partidos p using (fixture_id) left join futbol.ligas l on l.id = p.liga_id
                         where a.id = ${alertaId}`;
   if (!a) return 0;
@@ -30,13 +30,16 @@ export async function avisoAlerta(alertaId: number) {
                           order by casa_id, ts desc`;
   casas.sort((x: any, y: any) => Number(y.cuota_over) - Number(x.cuota_over));
   // Monto sugerido con la casa que paga MENOS (Fredy, 18 nov: lo prudente); sin casas, la cuota de la alerta
-  const baja = casas.length ? casas[casas.length - 1] : null;
+  // BetPlay y Rushbet (DECISIONES 54): van primero y el monto sale de la más baja de ellas (es donde se entra)
+  const propias = Object.entries((a.cuota_casas ?? {}) as Record<string, number>)
+    .map(([casa, c]) => ({ casa, cuota_over: Number(c) })).sort((x, y) => y.cuota_over - x.cuota_over);
+  const baja = propias.length ? propias[propias.length - 1] : casas.length ? casas[casas.length - 1] : null;
   const cuotaBaja = baja ? Number(baja.cuota_over) : Number(a.cuota);
   const [mx] = await sql`select (valor #>> '{}')::numeric as v from futbol.config where clave = 'monto_max_pct'`;
   const maxPct = Number(mx?.v ?? 10);
   // Formato de Fredy (18 nov): país, competencia, partido, mercado, monto y casas, una línea cada uno
   const pais = (a.pais ?? "").replace(/-/g, " ").trim();
-  const listaCasas = casas.map((c: any) => ({ casa: c.casa, c: Number(c.cuota_over) }));
+  const listaCasas = [...propias, ...casas].map((c: any) => ({ casa: c.casa, c: Number(c.cuota_over) }));
   if (!listaCasas.length && a.cuota) listaCasas.push({ casa: "Promedio", c: Number(a.cuota) });
   return await notificar((d) => ({
     titulo: `⚽ Entrada sugerida · ${favDe(a)} ataca`,
