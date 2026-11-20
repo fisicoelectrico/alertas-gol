@@ -231,11 +231,21 @@ export async function cicloCorners(args: {
           continue;
         }
       }
+      // DECISIONES 67: mercado suspendido un momento (lo tenían hace poco). Se espera mientras siga la ventana;
+      // antes se cerraba de una "sin mercado" y no salía la push (Al Ahli–Al Nassr, 20 nov, min 76).
+      if (ofK?.estado === "sin_mercado" && ofK.suspendido) {
+        const hasta = mercado === "c1t_cero20" ? P.t1_hasta : mercado === "c1t_uno" ? P.t1u_hasta : P.t2_hasta;
+        if (minuto < hasta) {
+          log(`córners: ${mercado} ${p.local}-${p.visitante} min ${minuto}: mercado suspendido en BetPlay/Rushbet, espera`);
+          continue;
+        }
+      }
       consultada = !!ofK && ofK.estado !== "kambi_caido";
       hayMercado = ofK ? (ofK.estado === "ofrece" || ofK.estado === "sin_linea") : null;
       if (ofK?.estado === "ofrece") { cuota = ofK.casas[ofK.casas.length - 1].c; mercadoNombre = `Kambi: ${ofK.casas.map((x) => x.casa).join(", ")}`; }
       else if (ofK?.cercana) { lineaOfrecida = ofK.cercana.linea; cuotaOfrecida = ofK.cercana.casas[ofK.cercana.casas.length - 1].c; mercadoNombre = "Kambi"; }
-      if (ofK && ofK.estado !== "ofrece") motivoSinCuota = ofK.estado === "sin_linea" ? "sin_esa_linea" : `casas_${ofK.estado}`;
+      if (ofK && ofK.estado !== "ofrece") motivoSinCuota = ofK.estado === "sin_linea" ? "sin_esa_linea"
+        : ofK.suspendido ? "casas_suspendido" : `casas_${ofK.estado}`;
       else if (!ofK) motivoSinCuota = "error_kambi";
     } else if (cfg.corners_api_fotos === true) {
       // DECISIONES 51: la cuota sale de la foto de /odds/live (todos los partidos en 1 consulta). Si no hay

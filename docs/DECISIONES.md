@@ -293,3 +293,13 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 - **Regla de Fredy:** si al menos uno de los dos equipos encaja con un partido de BetPlay/Rushbet a la misma hora, el partido NO se esconde. Se queda en "Favoritos perdiendo" con la etiqueta ámbar "Revisar: en BetPlay sería <nombre de Kambi>", para que Fredy lo revise a la primera.
 - **Cómo:** `FS.dudosos()` busca, para los partidos que `emparejar` no unió, un evento de Kambi a ±20 min, misma categoría, con una palabra real en común en el local o en el visitante. El radar guarda `kb = "revisar"` y `kbn` (nombre en Kambi). No se usan para cuotas ni alertas (podrían ser otro partido): solo para no esconderlos.
 - **Causa real de Chrobry - Puszcza:** Kambi lo llama "Chrobry Głogów - Puszcza Niepołomice". La normalización (NFD) no descompone la "ł", así que "Głogów" quedaba "g ogow" y no emparejaba. `fichas()` ahora traduce ł→l, ø→o, đ→d, ß→ss, æ→ae, ı→i, œ→oe. Probado: Chrobry y Shakhtar–Levy Bereg emparejan; Bullom Stars sigue sin pareja.
+
+## 67. Córners: si BetPlay/Rushbet suspenden el mercado un momento, el aviso espera en vez de cerrarse (20 nov 2026, pregunta de Fredy por Al Ahli–Al Nassr)
+
+**Caso.** Al Ahli SC–Al Nassr (Saudi Pro League, favorito Al Nassr). Al 76' (19:06 UTC) iba 2-1, 8 córners: el aviso `c2t_fav77` se abrió con línea más de 9,5. La lectura de Kambi de ese mismo segundo traía el mercado de córners vacío en las dos casas (suspendido; a las 19:04 había más de 9,5 a 2,10 y a las 19:10 volvió a 1,67). El aviso se cerró como `casas_sin_mercado`, sin push, y terminó en acierto (10 córners).
+
+**Causa.** La espera de DECISIONES 60 solo cubría `sin_lectura`. Un `sin_mercado` cerraba el aviso de una vez, aunque fuera una suspensión de segundos (gol, penal, VAR, jugada de peligro).
+
+**Cambio.** `kambi.oferta()` marca `suspendido` cuando no hay mercado pero sí lo hubo en alguna lectura de ese partido en los últimos `kambi_suspension_min` minutos (10 por defecto, editable en config). En ese caso el aviso de córners espera al siguiente ciclo mientras el minuto siga dentro de la ventana del mercado; si la ventana termina sin mercado, se guarda con el motivo nuevo `casas_suspendido`. Un partido que nunca tuvo mercado de córners sigue cerrándose al instante como `casas_sin_mercado`.
+
+**Alcance.** En los últimos 2 días, 2 de 18 avisos "sin mercado" eran suspensiones (Al Ahli–Al Nassr y Septemvri–Lok. Plovdiv); los otros 16 nunca tuvieron el mercado en BetPlay/Rushbet.
