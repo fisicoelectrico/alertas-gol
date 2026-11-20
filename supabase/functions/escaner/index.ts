@@ -278,7 +278,7 @@ Deno.serve(async (req) => {
   const ahora = new Date();
   // Observados (DECISIONES 32): ex candidatos que siguen en vivo. Ya no se evalúan, pero se mira su
   // marcador al ritmo rápido para saber si hubo un gol más y en qué minuto (Flashscore, sin cuota).
-  const [{ cand: nCandidatos, pend: nPendientes, obs: nObservados, lab: nLab }] = await sql`
+  const [{ cand: nCandidatos, pend: nPendientes, obs: nObservados, lab: nLab, listos: nListos }] = await sql`
     select (select count(*)::int from futbol.partidos where seguimiento) as cand,
            (select count(*)::int from futbol.lab_oportunidades where vigilando) as lab,
            (select count(distinct a.fixture_id)::int from futbol.alertas a join futbol.partidos p using (fixture_id)
@@ -288,7 +288,16 @@ Deno.serve(async (req) => {
              where not p.seguimiento and p.estado in ('1H', 'HT', '2H') and p.kickoff > now() - interval '4 hours'
                and coalesce(l.habilitada, true)
                and ${cfg.observar_ex_candidatos !== false}
-               and exists (select 1 from futbol.snapshots s where s.fixture_id = p.fixture_id)) as obs`;
+               and exists (select 1 from futbol.snapshots s where s.fixture_id = p.fixture_id)) as obs,
+           -- DECISIONES 62: candidatos que ya cumplen dominancia y momentum y solo esperan la cuota (sin alerta aún)
+           (select count(*)::int from futbol.partidos p
+             join lateral (select s.ts, s.evaluacion from futbol.snapshots s where s.fixture_id = p.fixture_id
+                           order by s.ts desc limit 1) s on true
+             where p.seguimiento and s.ts > now() - interval '5 minutes'
+               and s.evaluacion->>'dominancia' = 'true' and s.evaluacion->>'momentum' = 'true'
+               and coalesce(s.evaluacion->>'cuota', '') <> 'true'
+               and not exists (select 1 from futbol.alertas a where a.fixture_id = p.fixture_id
+                               and a.regla_version = ${String(cfg.regla_version ?? "")})) as listos`;
   const horas: number[] = cfg.horas_activas_utc ?? [];
   const enHorario = horas.includes(ahora.getUTCHours());
   // Prueba manual: ignora horario e intervalo (NUNCA el presupuesto). Exige el token guardado en
@@ -382,7 +391,11 @@ Deno.serve(async (req) => {
   // Modo FS con dos ritmos: sin candidatos basta con mirar la lista cada intervalo_fs_min (5);
   // con candidatos el ciclo corre cada intervalo_fs_seg_min (2) para tener snapshots de
   // estadísticas más seguidos (Flashscore no gasta cuota). La cuota en vivo tiene su propio tope.
-  const intervaloFS = nCandidatos + nObservados + nLab > 0 ? Number(cfg.intervalo_fs_seg_min ?? 2) : Number(cfg.intervalo_fs_min ?? 5);
+  // DECISIONES 62: si un candidato ya cumple todo menos la cuota, el ciclo corre cada intervalo_fs_listo_min (1):
+  // cada minuto se mira la cuota de BetPlay/Rushbet que trajo la cola. Solo en ese estado (0 a 2 partidos),
+  // no en todos los partidos. intervalo_fs_listo_min = 2 lo devuelve al ritmo normal.
+  const intervaloFS = nListos > 0 ? Math.min(Number(cfg.intervalo_fs_listo_min ?? 1), Number(cfg.intervalo_fs_seg_min ?? 2))
+    : nCandidatos + nObservados + nLab > 0 ? Number(cfg.intervalo_fs_seg_min ?? 2) : Number(cfg.intervalo_fs_min ?? 5);
   if (modoFS) {
     if ((enHorario || forzar || nCandidatos > 0 || nPendientes > 0 || nObservados > 0 || nLab > 0) &&
         await reservar("ultimo_fs", forzar ? 0.5 : intervaloFS)) modo = "fs";
@@ -706,7 +719,27 @@ Deno.serve(async (req) => {
       // (cicloCuotasVivo ya tomó la foto del candidato este ciclo) y así la tarjeta muestra qué líneas hay
       // aunque el momentum todavía no exista. No cambia la regla: sin momentum evaluar() no dispara.
       const verCuotaFS = vale || dominancia >= regla.dominancia_min || cfg.cuotas_siempre === true;
-      if (verCuotaFS && cfg.cuota_vivo_fuente === "flashscore" && f0.__fs?.id) {
+      // DECISIONES 62 (Dinamo Tbilisi 0-1 Torpedo Kutaisi, 20 nov): la cuota que DECIDE es la de BetPlay/Rushbet
+      // (Kambi), la mejor de las dos, que es la que Fredy puede tomar. Antes se evaluaba con Flashscore
+      // (Wplay/Betano/Stake): si ninguna de esas tenía la línea, la tarjeta decía "sin cuota" y la alerta nunca
+      // disparaba aunque BetPlay pagara 1,30-1,33. Flashscore queda solo de respaldo (Kambi sin lectura o caído;
+      // en ese caso la push igual la frena pasaPush) y sus casas se guardan aparte como referencia.
+      let casasKambi: Record<string, number> | null = null, estadoKambi: string | null = null;
+      if (kambi && f0.__fs?.id && cfg.cuota_decide_kambi !== false) {
+        try {
+          const o = await kambi.oferta(f0.__fs.id, "goles", linea, { goles: gl + gv });
+          estadoKambi = o.estado;
+          if (o.estado === "ofrece") {
+            casasKambi = casasJson(o);
+            const lineasK: Record<string, number> = {};
+            if (o.cercana) lineasK[String(o.cercana.linea)] = o.cercana.casas[0].c;
+            cuotaOver = { linea, cuota: Math.max(...o.casas.map((x) => x.c)), suspendida: false, mercado: "kambi", lineas: lineasK };
+          } else if (o.estado === "sin_linea" && o.cercana) {
+            cuotaOver = { ...cuotaOver, mercado: "kambi", lineas: { [String(o.cercana.linea)]: o.cercana.casas[0].c } };
+          }
+        } catch (e) { log(`kambi cuota ${id}: ${(e as Error).message}`); }
+      }
+      if (cuotaOver.cuota === null && verCuotaFS && cfg.cuota_vivo_fuente === "flashscore" && f0.__fs?.id) {
         try {
           const c = await cuotaOverFS(f0, linea, cfg, log);
           casasVivo = c.casas;
@@ -733,7 +766,7 @@ Deno.serve(async (req) => {
         values (${id}, ${minuto}, ${gl}, ${gv}, ${sql.json(sL as any)}, ${sql.json(sV as any)},
           ${ipL.toFixed(2)}, ${ipV.toFixed(2)}, ${dominancia.toFixed(3)}, ${momentum?.toFixed(3) ?? null},
           ${linea}, ${cuotaOver.cuota}, ${regla.version},
-          ${sql.json({ ...ev.condiciones, mercado: cuotaOver.mercado, lineas: cuotaOver.lineas, casas: casasVivo, usar_xg: usarXg, fuente_stats: fuenteStats,
+          ${sql.json({ ...ev.condiciones, mercado: cuotaOver.mercado, lineas: cuotaOver.lineas, casas: casasKambi ?? casasVivo, casas_fs: casasVivo, kambi: estadoKambi, usar_xg: usarXg, fuente_stats: fuenteStats,
                        momentum_base: prev ? { minuto: prev.minuto, fuente: prev.fuente } : null } as any)},
           ${sql.json({ statistics: equipos, odds: rOdds?.response ?? null, fixture: { ...f, statistics: undefined, players: undefined, lineups: undefined } } as any)})
         returning id`;
@@ -1010,8 +1043,11 @@ Deno.serve(async (req) => {
             where resultado = 'pendiente' and ts > now() - interval '3 hours'`).map((r: any) => Number(r.fixture_id)));
         const prioridad = new Set<string>(enVivo.filter((f) => esCandidato(f) || enHistorial(f) || abiertas.has(f.fixture.id))
           .map((f) => f.__fs?.id).filter(Boolean));
-        for (const r of await sql`select fs_id from futbol.lab_oportunidades where vigilando and fs_id is not null`) prioridad.add(r.fs_id);
-        kambi = await cicloKambi({ cfg, vivosFS, fixtureDe: (fs) => conocidos.get(fs)?.fixture_id ?? null, prioridad, log });
+        // Urgentes (DECISIONES 62): la cuota de goles decide una push ya → el cron los pide cada 30 s
+        const urgente = new Set<string>(enVivo.filter((f) => esCandidato(f) || abiertas.has(f.fixture.id))
+          .map((f) => f.__fs?.id).filter(Boolean));
+        for (const r of await sql`select fs_id from futbol.lab_oportunidades where vigilando and fs_id is not null`) { prioridad.add(r.fs_id); urgente.add(r.fs_id); }
+        kambi = await cicloKambi({ cfg, vivosFS, fixtureDe: (fs) => conocidos.get(fs)?.fixture_id ?? null, prioridad, urgente, log });
         (detalle as any).kambi = kambi.resumen;
       } catch (e) { log(`kambi: ${(e as Error).message}`); }
       try { await cicloCorners({ cfg, vivosFS, conocidos, api, log, kambi, fotoForzada: () => fotoCornersApi({ cfg, vivosFS, log, forzada: true }) }); }
