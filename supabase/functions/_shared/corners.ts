@@ -236,10 +236,14 @@ export async function cicloCorners(args: {
       }
       // DECISIONES 67: mercado suspendido un momento (lo tenían hace poco). Se espera mientras siga la ventana;
       // antes se cerraba de una "sin mercado" y no salía la push (Al Ahli–Al Nassr, 20 nov, min 76).
-      if (ofK?.estado === "sin_mercado" && ofK.suspendido) {
+      // DECISIONES 73 (Fredy, 20 nov): en el 2T se vigila desde el gol (DECISIONES 72); si BetPlay/Rushbet aún no
+      // abren córners o no tienen esa línea (Legnica, Salzburg al 57'-62'), también se espera hasta el final.
+      const esperaSinMercado = mercado === "c2t_fav77" && cfg.corners_espera_sin_mercado !== false
+        && (ofK?.estado === "sin_mercado" || ofK?.estado === "sin_linea");
+      if ((ofK?.estado === "sin_mercado" && ofK.suspendido) || esperaSinMercado) {
         const hasta = mercado === "c1t_cero20" ? P.t1_hasta : mercado === "c1t_uno" ? P.t1u_hasta : P.t2_hasta;
         if (minuto < hasta) {
-          log(`córners: ${mercado} ${p.local}-${p.visitante} min ${minuto}: mercado suspendido en BetPlay/Rushbet, espera`);
+          log(`córners: ${mercado} ${p.local}-${p.visitante} min ${minuto}: ${ofK?.suspendido ? "mercado suspendido" : ofK?.estado} en BetPlay/Rushbet, espera`);
           continue;
         }
       }

@@ -356,3 +356,9 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 **Ojo con los datos.** El 61,8 % histórico de `c2t_fav77` se midió con entradas entre el 70' y el 80'. Una entrada al 55' a 1,40 es otra apuesta (más tiempo para 2 córners, pero la casa lo sabe y paga menos hasta que pasa un rato sin córners). Se compara por versión: c3 contra c4.
 
 **Volver atrás.** `corners_2t_min_desde = 70` desde Ajustes (sube la versión sola).
+
+## 73. Córners del 2T: si BetPlay/Rushbet aún no abren córners, el aviso espera hasta el 80' (20 nov 2026, a pedido de Fredy)
+
+**Caso.** Legnica 0-1 LKS Lodz (62') y Salzburg 1-2 Admira (57'): con la ventana desde el gol (DECISIONES 72), el aviso se cerró de una vez como `casas_sin_mercado`. Ahí las casas nunca abrieron córners, pero si lo hacen más tarde (p. ej. al 70') se perdería la entrada.
+
+**Cambio.** En `c2t_fav77`, si BetPlay/Rushbet tienen el partido pero no el mercado de córners (`sin_mercado`) o no la línea buscada (`sin_linea`), el aviso espera y se revisa cada ciclo hasta `corners_2t_min_hasta` (80'). En el último minuto se guarda igual, con su motivo y sin push. `casas_sin_partido` (la casa no tiene el partido) sigue cerrando de una vez. Llave `corners_espera_sin_mercado` (sin fila = encendida; `false` vuelve a lo de antes).
