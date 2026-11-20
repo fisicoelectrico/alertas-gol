@@ -110,10 +110,20 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
                               and linea = ${o.linea} and activa and cuota_over is not null
                               and goles_local + goles_visitante = ${o.goles_gatillo}
                             order by casa_id, ts desc`;
-    if (!filas.length) continue;
-    const casas = filas.map((r: any) => ({ casa: r.casa as string, c: Number(r.cuota_over) })).sort((a: any, b: any) => b.c - a.c);
+    // BetPlay y Rushbet (DECISIONES 57): si hay lectura, son ELLAS las que definen la oportunidad (Fredy: "vamos a
+    // registrar las oportunidades reales de inversión"). Sin lectura de ellas, se sigue con Flashscore (y sin push).
+    let ofK: OfertaCasa | null = null;
+    if (kambi && o.fs_id) {
+      try { ofK = await kambi.oferta(o.fs_id, "goles", Number(o.linea), { goles: Number(o.goles_gatillo) }); }
+      catch (e) { log(`lab: kambi ${o.fixture_id}: ${(e as Error).message}`); }
+    }
+    const propias = ofK?.estado === "ofrece" ? ofK.casas : [];
+    if (!filas.length && !propias.length) continue;
+    const casasFS = filas.map((r: any) => ({ casa: r.casa as string, c: Number(r.cuota_over) })).sort((a: any, b: any) => b.c - a.c);
+    const casas = propias.length ? propias : casasFS;
     const mejor = casas[0];
-    const serie = [...(o.serie ?? []), { m: min, c: mejor.c, casa: mejor.casa }];
+    // fs = la mejor de Flashscore en la misma foto (para comparar después contra BetPlay/Rushbet)
+    const serie = [...(o.serie ?? []), { m: min, c: mejor.c, casa: mejor.casa, fs: casasFS[0]?.c ?? null }];
     const sube = o.mejor_cuota == null || mejor.c > Number(o.mejor_cuota);
     await sql`update futbol.lab_oportunidades set serie = ${sql.json(serie)},
                 mejor_cuota = ${sube ? mejor.c : o.mejor_cuota}, mejor_casa = ${sube ? mejor.casa : o.mejor_casa},
@@ -133,21 +143,15 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
     const n = Number(u?.n ?? o.n_hist ?? 0);
     const listo = Number(U.get(o.estrategia)?.n ?? o.n_hist ?? 0) >= nMin;
     let push = 0;
-    // DECISIONES 54 (Fredy, 20 nov): BetPlay y Rushbet. Sin esa línea en ninguna de las dos no hay push;
-    // la oportunidad igual queda alertada (con lo que ofrecían) para el histórico. El umbral sigue igual.
-    let ofK: OfertaCasa | null = null, gate = { sale: true, motivo: null as string | null };
-    if (kambi && o.fs_id) {
-      try { ofK = await kambi.oferta(o.fs_id, "goles", Number(o.linea), { goles: Number(o.goles_gatillo) }); gate = pasaPush(cfg, ofK, true); }
-      catch (e) { log(`lab: kambi ${o.fixture_id}: ${(e as Error).message}`); }
-    }
+    // DECISIONES 54/57 (Fredy, 20 nov): sin esa línea en BetPlay ni Rushbet, o si ninguna paga el umbral, no hay
+    // push; la oportunidad igual queda registrada (con lo que ofrecían y el motivo) para el histórico.
+    const gate = ofK ? pasaPush(cfg, ofK, true, umbral) : { sale: true, motivo: null as string | null };
     if (listo && cfg.lab_push !== false && avisan.has(o.estrategia) && gate.sale) {
       const L = NOMBRE_LAB[o.estrategia];
       // Monto sugerido con la casa más baja de las que pagan el umbral o más (las demás no tienen valor).
       // Con BetPlay/Rushbet, el monto sale de la más baja de ellas: es donde se entra de verdad.
       const validas = casas.filter((x: any) => x.c >= umbral);
-      const propias = ofK?.estado === "ofrece" ? ofK.casas : [];
-      const baja = propias.length ? propias[propias.length - 1] : validas[validas.length - 1];
-      const bajoUmbral = propias.length && propias[0].c < umbral ? ` · ojo: ${propias[0].casa} paga menos que el umbral` : "";
+      const baja = validas[validas.length - 1];
       // Formato de Fredy (18 nov): país, competencia, partido, mercado, monto y casas; al final, el porqué
       const [paisL, ...resto] = String(o.liga ?? "").split(" · ");
       push = await notificar((d) => ({
@@ -155,8 +159,8 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
         cuerpo: lineasEntrada({
           pais: resto.length ? paisL : null, liga: resto.length ? resto.join(" · ") : (paisL || null),
           partido: `${o.local} ${f.goals.home}–${f.goals.away} ${o.visitante} · min ${min}`,
-          mercado: `Más de ${coma(Number(o.linea), 1)} goles (umbral ${coma(umbral)})${bajoUmbral}`,
-          d, casas: [...propias, ...casas], cuotaMonto: baja.c, casaMonto: baja.casa, maxPct: Number(cfg.monto_max_pct ?? 10),
+          mercado: `Más de ${coma(Number(o.linea), 1)} goles (umbral ${coma(umbral)})`,
+          d, casas: [...casas, ...(propias.length ? casasFS : [])], cuotaMonto: baja.c, casaMonto: baja.casa, maxPct: Number(cfg.monto_max_pct ?? 10),
         }) + `\nEn la base: ${u?.aciertos ?? "?"} de ${n}${tramo ? ` que seguían 1 gol al ${tramo}'` : ""} ${L.texto}.`,
         url: "./#laboratorio", tag: `lab-${o.estrategia}-${o.fixture_id}`,
       }), { soloAdmin: true });

@@ -35,7 +35,7 @@ import { ApiFootball } from "./apifootball.ts";
 import { notificar, cuotaTxt, ligaFS } from "./notificar.ts";
 import { umbrales } from "./lab.ts";
 import { fotoReciente, ofertaCorners } from "./cornersapi.ts";
-import { Kambi, OfertaCasa, casasJson } from "./kambi.ts";
+import { Kambi, OfertaCasa, casasJson, pasaPush } from "./kambi.ts";
 
 type Mercado = "c1t_cero20" | "c1t_uno" | "c2t_fav77";
 const es1T = (m: string) => m.startsWith("c1t");
@@ -292,12 +292,16 @@ export async function cicloCorners(args: {
       ? `Córners 1T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. Va 1 córner. Todavía se puede entrar: más de ${coma(linea)} córners en el 1T (falta 1)${precio}.`
       : `Córners 2T: ${p.local} ${p.gl}–${p.gv} ${p.visitante}, min ${minuto}. ${fav} es favorito y va perdiendo. Van ${total} córners. Entrada: más de ${coma(linea)}${precio}.`;
     // Regla de Fredy (19 nov): sin cuota de córners para ese tiempo NO hay push. El aviso igual queda guardado.
-    const n = cfg.corners_push === false || hayMercado !== true ? 0 : await notificar({
+    // Con BetPlay/Rushbet (DECISIONES 57): tienen que tener la línea y, si el mercado tiene cuota mínima
+    // calculada (0 córners → más de 1,5 / 2,5 en el 1T), pagarla. Si no, no es una entrada real.
+    let gateK = { sale: true, motivo: null as string | null };
+    if (ofK) gateK = pasaPush(cfg, ofK, false, mercado === "c1t_cero20" ? await umbralCero(cfg, linea, log) : null);
+    const n = cfg.corners_push === false || hayMercado !== true || !gateK.sale ? 0 : await notificar({
       titulo: ligaFS(p.liga).txt,
       cuerpo, url: `./#corners/${al.id}`, tag: `corner-${al.id}`,
     }, { soloAdmin: true });
     await sql`update futbol.alertas_corners set push_enviados = ${n} where id = ${al.id}`;
-    log(`córners: aviso ${mercado} ${p.local}-${p.visitante} min ${minuto}, línea ${linea}, cuota ${cuota ?? motivoSinCuota}${n ? "" : " (sin push)"}`);
+    log(`córners: aviso ${mercado} ${p.local}-${p.visitante} min ${minuto}, línea ${linea}, cuota ${cuota ?? motivoSinCuota}${n ? "" : ` (sin push${gateK.motivo ? `: ${gateK.motivo}` : ""})`}`);
   }
 }
 
@@ -308,6 +312,17 @@ export async function cicloCorners(args: {
  *   prudente = 1 / límite bajo Wilson (= "umbral" del laboratorio de goles)
  * Solo líneas 1,5 y 2,5 del 1T (3,5 todavía no se maneja). Si algo falla, la push sale sin esta línea.
  */
+/** Cuota mínima (justa o prudente, según corners_cuota_min_tipo) de "0 córners → más de 1,5 / 2,5 en el 1T". */
+async function umbralCero(cfg: Config, linea: number, log: (s: string) => void): Promise<number | null> {
+  const est = linea === 1.5 ? "c1t_cero20" : linea === 2.5 ? "c1t_cero20_o25" : null;
+  if (!est) return null;
+  try {
+    const u = (await umbrales(log)).get(est);
+    const v = Number(String(cfg.corners_cuota_min_tipo ?? "justa") === "prudente" ? u?.umbral : u?.cuota_justa);
+    return Number.isFinite(v) && v > 1 ? v : null;
+  } catch (_e) { return null; }
+}
+
 async function cuotaMinimaCero(cfg: Config, log: (s: string) => void): Promise<string> {
   try {
     const U = await umbrales(log);

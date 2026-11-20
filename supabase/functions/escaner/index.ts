@@ -768,13 +768,14 @@ Deno.serve(async (req) => {
           alertasNuevas++;
           const favNombre = fav === "home" ? f.teams.home.name : f.teams.away.name;
           // Texto para gente común (spec 1.6), con botones Entré / No entro
-          // DECISIONES 54 (Fredy, 20 nov): solo hay push si BetPlay o Rushbet ofrecen esa línea; la alerta
+          // DECISIONES 54/57 (Fredy, 20 nov): solo hay push si BetPlay o Rushbet ofrecen esa línea y pagan la
+          // cuota objetivo de la regla; la alerta
           // igual queda guardada con lo que ofrecían y el motivo. La regla de disparo no cambia.
           let gate = { sale: true, motivo: null as string | null }, casasK: Record<string, number> | null = null;
           if (kambi && f0.__fs?.id) {
             try {
               const o = await kambi.oferta(f0.__fs.id, "goles", linea, { goles: gl + gv });
-              gate = pasaPush(cfg, o, true); casasK = casasJson(o);
+              gate = pasaPush(cfg, o, true, Number(regla.cuota_objetivo)); casasK = casasJson(o);
             } catch (e) { log(`kambi alerta ${id}: ${(e as Error).message}`); }
           }
           await sql`update futbol.alertas set cuota_casas = ${casasK ? sql.json(casasK) : null}, motivo_sin_push = ${gate.motivo}
