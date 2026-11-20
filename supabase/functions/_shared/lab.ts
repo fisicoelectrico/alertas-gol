@@ -160,7 +160,9 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
           pais: resto.length ? paisL : null, liga: resto.length ? resto.join(" · ") : (paisL || null),
           partido: `${o.local} ${f.goals.home}–${f.goals.away} ${o.visitante} · min ${min}`,
           mercado: `Más de ${coma(Number(o.linea), 1)} goles (umbral ${coma(umbral)})`,
-          d, casas: [...casas, ...(propias.length ? casasFS : [])], cuotaMonto: baja.c, casaMonto: baja.casa, maxPct: Number(cfg.monto_max_pct ?? 10),
+          // Fredy (20 nov): Wplay/Betano/Stake no le sirven; con BetPlay/Rushbet en la mano, solo ellas se muestran
+          // (Flashscore queda en la serie como referencia, columna fs). Sin Kambi, se muestra lo de Flashscore.
+          d, casas, cuotaMonto: baja.c, casaMonto: baja.casa, maxPct: Number(cfg.monto_max_pct ?? 10),
         }) + `\nEn la base: ${u?.aciertos ?? "?"} de ${n}${tramo ? ` que seguían 1 gol al ${tramo}'` : ""} ${L.texto}.`,
         url: "./#laboratorio", tag: `lab-${o.estrategia}-${o.fixture_id}`,
       }), { soloAdmin: true });

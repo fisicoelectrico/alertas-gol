@@ -33,13 +33,16 @@ export async function avisoAlerta(alertaId: number) {
   // BetPlay y Rushbet (DECISIONES 54): van primero y el monto sale de la más baja de ellas (es donde se entra)
   const propias = Object.entries((a.cuota_casas ?? {}) as Record<string, number>)
     .map(([casa, c]) => ({ casa, cuota_over: Number(c) })).sort((x, y) => y.cuota_over - x.cuota_over);
-  const baja = propias.length ? propias[propias.length - 1] : casas.length ? casas[casas.length - 1] : null;
+  // Fredy (20 nov): Wplay/Betano no le sirven. Con BetPlay/Rushbet, la push muestra y calcula SOLO con ellas;
+  // Flashscore solo aparece si no hay lectura de Kambi (Kambi apagado o kambi_caido_avisa).
+  const ref = propias.length ? propias : casas;
+  const baja = ref.length ? ref[ref.length - 1] : null;
   const cuotaBaja = baja ? Number(baja.cuota_over) : Number(a.cuota);
   const [mx] = await sql`select (valor #>> '{}')::numeric as v from futbol.config where clave = 'monto_max_pct'`;
   const maxPct = Number(mx?.v ?? 10);
   // Formato de Fredy (18 nov): país, competencia, partido, mercado, monto y casas, una línea cada uno
   const pais = (a.pais ?? "").replace(/-/g, " ").trim();
-  const listaCasas = [...propias, ...casas].map((c: any) => ({ casa: c.casa, c: Number(c.cuota_over) }));
+  const listaCasas = ref.map((c: any) => ({ casa: c.casa, c: Number(c.cuota_over) }));
   if (!listaCasas.length && a.cuota) listaCasas.push({ casa: "Promedio", c: Number(a.cuota) });
   return await notificar((d) => ({
     titulo: `⚽ Entrada sugerida · ${favDe(a)} ataca`,

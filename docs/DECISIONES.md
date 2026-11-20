@@ -227,3 +227,8 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 - **Córners:** 0 córners → más de 1,5 / 2,5 en el 1T exige la cuota mínima de `lab_umbrales` (justa o prudente según `corners_cuota_min_tipo`). Los demás mercados de córners todavía no tienen cuota mínima: basta con que tengan la línea exacta.
 
 **58. Widget v2: favoritos perdiendo y LED de BetPlay/Rushbet (20 nov).** Fredy aprobó la maqueta (canvas "Widget ADN Soccer v2"). `GET /api/widget` suma `perdiendo` (en vivo con el favorito perdiendo, liga corta "País · Liga") y `casas` (`ok` = el cron trajo la lista en vivo con 200 hace ≤ 3 min, `en_vivo`, `hace_min`, `status`); las claves viejas siguen para el APK anterior. El widget muestra arriba "N favoritos perdiendo" (fila ámbar = candidato) y abajo BetPlay y Rushbet con LED verde/rojo. Fuera del horario del radar el cron no lee Kambi, así que de noche los LED salen en rojo con "sin datos hace N h". Tamaño por defecto 4×3.
+
+## 58. La push muestra solo BetPlay y Rushbet (20 nov 2026, a pedido de Fredy)
+- **Problema:** la push de gol temprano de St. George–Hadiya Hossana (7:57 a. m.) listaba "BetPlay 1,54 · Rushbet 1,52 · Wplay 1,55 · Betano 1,38". La decisión y el monto ya salían de BetPlay/Rushbet (DECISIONES 57), pero el texto seguía pegando las casas de Flashscore al final.
+- **Cambio:** con lectura de Kambi, la push (alerta principal y laboratorio) muestra y calcula el monto SOLO con BetPlay y Rushbet. Flashscore sigue guardándose (`cuotas_vivo`, columna `fs` de la serie) como referencia para comparar.
+- `kambi_caido_avisa = false`: si Kambi no respondió en ese ciclo ya no sale push con cuotas de Flashscore; queda registrada con su motivo. Volver a `true` reactiva ese respaldo.
