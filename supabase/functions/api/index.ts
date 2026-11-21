@@ -62,7 +62,7 @@ const EDITABLES = new Set([
   "minuto_min", "minuto_max", "cuota_fav_max", "diferencia_min", "dominancia_min", "cuota_objetivo",
   "momentum_ventana_min", "momentum_gap_min", "pesos_ip",
   "escaneo_activo", "presupuesto_diario", "reserva_api", "intervalo_radar_min", "intervalo_seguimiento_min",
-  "horas_activas_utc", "fraccion_radar", "max_detalle_escaneo", "stake", "cuotas_siempre", "excluir_reempate", "excluir_roja_fav", "goles_fav_max",
+  "horas_activas_utc", "fraccion_radar", "max_detalle_escaneo", "stake", "cuotas_siempre", "excluir_reempate", "excluir_roja_fav", "goles_fav_max", "alerta_push",
   // Córners (lab, DECISIONES 37)
   "corners_activo", "corners_push", "corners_cuota", "corners_api_max_dia", ...CORNERS_REGLA,
   // Fotos de cuotas de córners desde /odds/live (DECISIONES 51)
@@ -107,7 +107,7 @@ function validarValor(clave: string, v: unknown): boolean {
   if (clave === "lab_push_amigos" || clave === "corners_push_amigos") return typeof v === "boolean";
   if (clave === "lab_umbral_fijo" || clave === "corners_cuota_min_fija") return typeof v === "number" && (v === 0 || (v > 1 && v <= 20));
   if (clave === "fs_vivo_max_consultas") return typeof v === "number" && Number.isInteger(v) && v >= 3 && v <= 60;
-  if (clave === "escaneo_activo" || clave === "cuotas_siempre" || clave === "excluir_reempate" || clave === "excluir_roja_fav") return typeof v === "boolean";
+  if (clave === "escaneo_activo" || clave === "alerta_push" || clave === "cuotas_siempre" || clave === "excluir_reempate" || clave === "excluir_roja_fav") return typeof v === "boolean";
   return typeof v === "number" && Number.isFinite(v) && v >= 0;
 }
 

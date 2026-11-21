@@ -815,6 +815,8 @@ Deno.serve(async (req) => {
               gate = pasaPush(cfg, o, true, Number(regla.cuota_objetivo)); casasK = casasJson(o);
             } catch (e) { log(`kambi alerta ${id}: ${(e as Error).message}`); }
           }
+          // DECISIONES 75 (Fredy, 21 nov): la push principal se puede apagar sin dejar de registrar la alerta
+          if (cfg.alerta_push === false) gate = { sale: false, motivo: "push_apagada" };
           await sql`update futbol.alertas set cuota_casas = ${casasK ? sql.json(casasK) : null}, motivo_sin_push = ${gate.motivo}
                     where id = ${nueva[0].id}`;
           const enviados = gate.sale ? await avisoAlerta(Number(nueva[0].id)) : 0;
