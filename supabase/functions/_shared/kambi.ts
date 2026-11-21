@@ -253,18 +253,35 @@ export async function cicloKambi(args: {
       if (quiere.length > maxEv) log(`kambi: ${casa} quiere ${quiere.length} partidos, tope kambi_max_eventos = ${maxEv}`);
       if (via === "cola") {
         // 1. Guardar las cuotas que trajo el cron desde el ciclo anterior (la más nueva de cada partido)
-        let guardadas = 0;
+        let guardadas = 0, viejas = 0;
         for (const r of await sql`select * from futbol.kambi_eventos() where casa = ${casa}`) {
           try {
             if (r.status_code !== 200) continue;
             const e = porId.get(Number(r.evento_id));   // minuto, marcador y córners de la lista actual
             if (!e) continue;                          // ya no está en vivo
             const fs = [...pares.entries()].find(([, v]) => v.fixture_id === e.id)?.[0] ?? r.fs_id;
-            if (await guardar(e, fs, fs ? fixtureDe(fs) ?? r.fixture_id : r.fixture_id, parseEvento(JSON.parse(r.content)))) guardadas++;
+            const fx = fs ? fixtureDe(fs) ?? r.fixture_id : r.fixture_id;
+            // DECISIONES 76 (Xelajú–Suchitepéquez, 21 nov): la respuesta se pidió ANTES de un gol y el marcador sale
+            // de la lista actual. Guardarla así pegaba cuotas del 0-0 (Más de 2,5 a 1,64) a un partido 1-0 (1,22).
+            // Si hubo gol después del pedido, esas cuotas ya no valen: se descartan y se espera la siguiente lectura.
+            const goles = (e.gl ?? 0) + (e.gv ?? 0);
+            const [v] = await sql`
+              with p as (select ts from futbol.kambi_pedidos where id = ${r.id})
+              select exists (select 1 from futbol.cuotas_casa c, p
+                             where c.casa = ${casa} and c.evento_id = ${e.id} and c.ts >= p.ts
+                               and c.goles_local + c.goles_visitante < ${goles})
+                  or exists (select 1 from futbol.cambios_marcador m, p
+                             where m.fixture_id = ${fx ?? null}::int and m.ts > p.ts) as vieja`;
+            if (v?.vieja) { viejas++; continue; }
+            if (await guardar(e, fs, fx, parseEvento(JSON.parse(r.content)))) guardadas++;
           } catch (err) { log(`kambi: evento ${casa} ${r.evento_id}: ${(err as Error).message}`); }
           finally {
+            // Por id y no por ${r.ts}: el Date de JS corta los microsegundos (19:17:18.627315 → .627), la condición
+            // ts <= r.ts no se cumplía para el propio pedido y la MISMA respuesta se volvía a guardar en cada ciclo
+            // durante 10 min, cada vez con el marcador y el minuto nuevos de la lista.
             await sql`update futbol.kambi_pedidos set procesado = true
-                      where casa = ${casa} and evento_id = ${r.evento_id} and not procesado and ts <= ${r.ts}`;
+                      where casa = ${casa} and evento_id = ${r.evento_id} and not procesado
+                        and ts <= (select ts from futbol.kambi_pedidos where id = ${r.id})`;
           }
         }
         // 2. Pedirle al cron los partidos que importan durante los próximos 6 min
@@ -284,7 +301,7 @@ export async function cicloKambi(args: {
                     on conflict (casa, evento_id) do update set hasta = excluded.hasta, fs_id = excluded.fs_id,
                       fixture_id = excluded.fixture_id, urgente = excluded.urgente`;
         }
-        resumen[casa] = { en_vivo: lista.length, emparejados: pares.size, guardadas, pedidos: pedir.length, quiere: quiere.length };
+        resumen[casa] = { en_vivo: lista.length, emparejados: pares.size, guardadas, viejas, pedidos: pedir.length, quiere: quiere.length };
         return;
       }
       const recientes = quiere.length ? new Set((await sql`select distinct fs_id from futbol.cuotas_casa
