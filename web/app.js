@@ -689,6 +689,8 @@ const pantallas = {
       <div class="titulo-seccion"><h2>Regla ${esc(P.regla_version?.valor)}</h2><small>cambiar algo crea una versión nueva</small></div>
       <div class="tarjeta">
         ${["minuto_min", "minuto_max", "cuota_fav_max", "diferencia_min", "dominancia_min", "cuota_objetivo", "momentum_ventana_min", "momentum_gap_min", ...(P.goles_fav_max ? ["goles_fav_max"] : [])].map((k) => campoNum(k)).join("")}
+        ${P.alerta_push ? `<div class="campo"><label for="p-alerta_push">Avisos al celular (alerta principal)<small>Apagado: sigue registrando las alertas en silencio</small></label>
+          <label class="sw"><input id="p-alerta_push" type="checkbox" data-k="alerta_push" data-tipo="bool" ${P.alerta_push.valor ? "checked" : ""}><span></span></label></div>` : ""}
         ${P.excluir_reempate ? `<div class="campo"><label for="p-excluir_reempate">Excluir reempate roto<small>${esc(P.excluir_reempate.descripcion || "")}</small></label>
           <label class="sw"><input id="p-excluir_reempate" type="checkbox" data-k="excluir_reempate" data-tipo="bool" ${P.excluir_reempate.valor ? "checked" : ""}><span></span></label></div>` : ""}
         ${P.excluir_roja_fav ? `<div class="campo"><label for="p-excluir_roja_fav">Excluir favorito con roja<small>${esc(P.excluir_roja_fav.descripcion || "")}</small></label>
