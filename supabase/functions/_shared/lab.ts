@@ -100,7 +100,8 @@ export async function cicloLab(opts: { cfg: Config; vivos: any[]; habilitada: (i
   for (const o of await sql`select * from futbol.lab_oportunidades where vigilando order by id`) {
     const f = porId.get(o.fixture_id);
     const min = f?.fixture.status.elapsed ?? null;
-    const sigue = f && ["1H", "HT", "2H"].includes(f.fixture.status.short) && total(f) === o.goles_gatillo && (min ?? 999) <= o.vence_minuto;
+    // Liga apagada a mitad de partido: deja de vigilarse y no avisa (misma política de ligas que la alerta principal)
+    const sigue = f && habilitada(o.fixture_id) && ["1H", "HT", "2H"].includes(f.fixture.status.short) && total(f) === o.goles_gatillo && (min ?? 999) <= o.vence_minuto;
     if (!sigue) {
       await sql`update futbol.lab_oportunidades set vigilando = false where id = ${o.id}`;
       continue;
