@@ -2,7 +2,7 @@
 Baja los respaldos diarios del detalle de mercados de BetPlay/Rushbet (DECISIONES 77) y los carga en pandas.
 
 Los archivos viven en Supabase Storage (espacio privado futbol-respaldo):
-    cuotas_casa/AAAA/MM/AAAA-MM-DD.jsonl.gz     una fila de futbol.cuotas_casa por línea, todas las columnas
+    cuotas_casa/AAAA/MM/AAAA-MM-DD/parte-NNN.jsonl.gz   una fila de futbol.cuotas_casa por línea, todas las columnas
 
 Uso (en el PC):
     set ADN_TOKEN=...            (el token_forzar de futbol.config; en Linux/Mac: export ADN_TOKEN=...)
@@ -11,7 +11,8 @@ Uso (en el PC):
 
 Luego, para analizar:
     import pandas as pd
-    df = pd.read_json("respaldos/2026-11-21.jsonl.gz", lines=True, compression="gzip")
+    import glob
+    df = pd.concat(pd.read_json(f, lines=True, compression="gzip") for f in sorted(glob.glob("respaldos/2026-11-21/*.jsonl.gz")))
     # df.mercados es una lista de {nombre, lineas: [{lado, linea, cuota}]} por lectura
 """
 import os, sys, json, urllib.request, pathlib
@@ -29,13 +30,14 @@ def main():
     for r in lista:
         if solo and r["dia"] != solo:
             continue
-        destino = carpeta / f"{r['dia']}.jsonl.gz"
+        (carpeta / r["dia"]).mkdir(exist_ok=True)
+        destino = carpeta / r["dia"] / f"parte-{r['parte']:03d}.jsonl.gz"
         if destino.exists() and destino.stat().st_size == r["bytes"]:
-            print(f"{r['dia']}: ya está ({r['filas']} filas)"); continue
+            print(f"{destino}: ya está ({r['filas']} filas)"); continue
         if not r.get("url"):
             print(f"{r['dia']}: sin enlace de descarga"); continue
         urllib.request.urlretrieve(r["url"], destino)
-        print(f"{r['dia']}: {r['filas']} filas, {r['bytes'] / 1e6:.1f} MB -> {destino}")
+        print(f"{r['dia']} parte {r['parte']}: {r['filas']} filas, {r['bytes'] / 1e6:.1f} MB -> {destino}")
 
 if __name__ == "__main__":
     main()
