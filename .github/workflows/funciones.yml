@@ -1,4 +1,4 @@
-# Despliega las Edge Functions (escaner, api, sonda-flashscore) en Supabase cada vez que cambian en main.
+# Despliega las Edge Functions (escaner, api, sonda-flashscore, respaldo) en Supabase cada vez que cambian en main.
 # Poka-yoke del despliegue: ningún cambio del escáner queda escrito en el repo pero sin activar.
 # Requiere el secreto SUPABASE_ACCESS_TOKEN (Supabase → Account → Access Tokens), pegado una vez en
 # GitHub → Settings → Secrets and variables → Actions. Sin el secreto, el trabajo avisa y no hace nada.
@@ -40,6 +40,6 @@ jobs:
       - if: steps.token.outputs.hay == 'si'
         name: Desplegar
         run: |
-          for f in escaner api sonda-flashscore; do
+          for f in escaner api sonda-flashscore respaldo; do
             supabase functions deploy "$f" --remote="$PROYECTO" --no-verify-jwt --use-api --yes   # --yes: en Actions no hay terminal para confirmar
           done
