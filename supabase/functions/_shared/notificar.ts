@@ -23,11 +23,18 @@ export type Destinatario = {
   banca: number | null; ganancia_pct: number | null;   // monto sugerido (DECISIONES 41)
 };
 type Mensaje = Record<string, unknown>;
-export type Opciones = { alertaId?: number; soloAdmin?: boolean; omitirMarcados?: boolean; soloUsuario?: number };
+export type Opciones = { alertaId?: number; soloAdmin?: boolean; omitirMarcados?: boolean; soloUsuario?: number; forzar?: boolean };
 
 export async function notificar(mensaje: Mensaje | ((d: Destinatario) => Mensaje | null), opc: Opciones = {}): Promise<number> {
   const v = vapid();
   if (!v) return 0;
+  // DECISIONES 78 (Fredy, 23 nov): interruptor general. Con silencio_total = true no sale NINGUNA push
+  // (alertas, laboratorio, córners, recordatorios, avisos técnicos); todo lo demás se sigue registrando
+  // igual. Solo pasan los envíos con forzar (botón de prueba de Ajustes y anuncios).
+  if (!opc.forzar) {
+    const [sil] = await sql`select valor from futbol.config where clave = 'silencio_total'`;
+    if (sil?.valor === true) return 0;
+  }
   const [m] = await sql`select valor #>> '{}' as v from futbol.config where clave = 'modo_acceso'`;
   const abierto = m?.v !== "cerrado";
   const alerta = opc.alertaId ?? -1;

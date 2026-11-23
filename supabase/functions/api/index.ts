@@ -1128,7 +1128,7 @@ Deno.serve(async (req) => {
       if (ruta === "/admin/laboratorio") return json(await laboratorio());
       if (ruta === "/admin/push-prueba") {
         const n = await notificar({ titulo: "🔔 Prueba de ADN Soccer", cuerpo: "Si ves esto, las notificaciones funcionan.", url: "./#ajustes", tag: "prueba" },
-                                  { soloAdmin: true });
+                                  { soloAdmin: true, forzar: true });   // la prueba pasa aunque haya silencio_total (DECISIONES 78)
         return json({ ok: true, enviados: n });
       }
       if (ruta === "/admin/pin") {

@@ -272,6 +272,25 @@ Deno.serve(async (req) => {
     return json({ motivo, ...resto, radar_partidos: extra.radar?.length ?? 0 });
   };
 
+  // ---------- Anuncio único (DECISIONES 78) ----------
+  // config.anuncio_pendiente = { desde, titulo, cuerpo }: al pasar "desde" se envía UNA vez a todas las personas
+  // activas (pasa aunque haya silencio_total) y se borra; queda copia en anuncio_enviado. El borrado va primero
+  // y con returning, así dos ejecuciones del cron que se crucen no lo mandan dos veces.
+  const an = cfg.anuncio_pendiente as { desde?: string; titulo?: string; cuerpo?: string } | undefined;
+  if (an?.titulo && (!an.desde || new Date(an.desde).getTime() <= Date.now())) {
+    const tomado = await sql`delete from futbol.config where clave = 'anuncio_pendiente' returning valor`;
+    if (tomado.length) {
+      let n = 0;
+      try {
+        n = await notificar({ titulo: an.titulo, cuerpo: an.cuerpo ?? "", url: "./#ahora", tag: "anuncio" }, { forzar: true });
+      } catch (e) { console.log(`anuncio: ${(e as Error).message}`); }
+      await sql`insert into futbol.config (clave, valor, descripcion)
+                values ('anuncio_enviado', ${sql.json({ ...an, enviado: new Date().toISOString(), push: n } as any)}, 'Último anuncio enviado (DECISIONES 78)')
+                on conflict (clave) do update set valor = excluded.valor, actualizado = now()`;
+      console.log(`anuncio enviado push=${n}`);
+    }
+  }
+
   // ---------- 0. Guardas ----------
   if (cfg.escaneo_activo !== true) return json({ motivo: "escaneo_inactivo" });
 
