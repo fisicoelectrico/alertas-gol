@@ -389,3 +389,14 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 - **Cómo:** Edge Function `respaldo`, cron `futbol-respaldo`. Exporta cada día (hora Colombia) que ya tenga más de `respaldo_dias_base` (3) días completos por partes de `respaldo_filas_por_parte` (3000) filas a `futbol-respaldo/cuotas_casa/AAAA/MM/AAAA-MM-DD/parte-NNN.jsonl.gz` (todas las columnas, una fila JSON por línea, serializada en Postgres). Vuelve a bajar cada archivo, cuenta las líneas y SOLO si coincide vacía `mercados` de esas filas (rango de id de la parte). Por partes porque el día completo del sábado pasó el tope de CPU de la función ("CPU Time exceeded" en la primera prueba). Las escaleras de Over, el marcador y el minuto se quedan en la base. Huella en `futbol.respaldos`. `respaldo_partes_por_llamada` (2) partes por llamada; el cron llama cada 5 min de 4:00 a 6:55 a. m. Colombia. `respaldo_activo` lo apaga.
 - **Leerlo:** `herramientas/respaldo_mercados.py` baja los archivos con enlaces firmados (pide `?lista=1` con el token) y se cargan con `pd.read_json(ruta, lines=True, compression="gzip")` (una carpeta por día). `?prueba=AAAA-MM-DD` exporta un día a `prueba/` y verifica sin vaciar nada.
 - El espacio privado de Storage `futbol-respaldo` es lo único fuera del esquema `futbol`, con visto bueno explícito de Fredy.
+
+## 78. Todas las push en silencio hasta fin de noviembre (23 nov 2026, a pedido de Fredy)
+
+**Caso.** Tras el fin de semana del 21-22 nov, Fredy decidió apagar todas las push, incluida la de gol temprano Más de 2,5 (la única que seguía encendida, DECISIONES 75), y dejar correr todas las reglas y mercados en silencio hasta el 30 de noviembre, con el respaldo diario de mercados a Storage (DECISIONES 77) funcionando, para revisar los números al cierre del mes.
+
+**Cambio.**
+- Config `lab_push = false` (aplicada en la base al instante). `alerta_push`, `corners_push` y `push_candidatos` ya estaban en false.
+- Interruptor general nuevo `silencio_total = true`: `notificar()` no envía nada mientras esté en true. Cubre lo que no tenía interruptor propio: avisos de Flashscore caído/volvió, recordatorios, aviso de gol y cierre de córners. La única excepción es `forzar: true` (botón de prueba de Ajustes y anuncios).
+- Nada cambia en el registro: alertas, `lab_oportunidades`, córners, snapshots, cuotas de BetPlay/Rushbet y resultados se siguen guardando igual; las alertas quedan con `push_enviados = 0` (la principal además con `motivo_sin_push = 'push_apagada'`).
+- Anuncio único: config `anuncio_pendiente = { desde, titulo, cuerpo }`. El escáner lo envía una vez a todas las personas activas al pasar `desde` y lo borra (copia en `anuncio_enviado`). Primer uso: lunes 23 nov, 7:00 a. m. Colombia, "alertas en pausa por revisión de las estadísticas del fin de semana".
+- Revisión de números programada para el 30 nov. Volver a encender: `silencio_total = false` y los interruptores de cada mercado que se quieran.
