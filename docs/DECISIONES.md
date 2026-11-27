@@ -401,3 +401,9 @@ Caso que lo motivó: el viernes 13 el radar se apagó a las 5:25 p. m. de Colomb
 - Nada cambia en el registro: alertas, `lab_oportunidades`, córners, snapshots, cuotas de BetPlay/Rushbet y resultados se siguen guardando igual; las alertas quedan con `push_enviados = 0` (la principal además con `motivo_sin_push = 'push_apagada'`).
 - Anuncio único: config `anuncio_pendiente = { desde, titulo, cuerpo }`. El escáner lo envía una vez a todas las personas activas al pasar `desde` y lo borra (copia en `anuncio_enviado`). Primer uso: lunes 23 nov, 7:00 a. m. Colombia, "alertas en pausa por revisión de las estadísticas del fin de semana".
 - Revisión de números programada para el 30 nov. Volver a encender: `silencio_total = false` y los interruptores de cada mercado que se quieran.
+
+## 79. Menos Disk IO en Supabase (27 nov 2026, a pedido de Fredy)
+
+Supabase avisó que `central-ingenieria` se está quedando sin presupuesto de Disk IO. Diagnóstico (pg_stat_statements, pg_stat_io, tamaños): lo que más escribe es pg_net guardando cada respuesta de BetPlay/Rushbet (~1.800 por hora, 45 KB de JSON cada una) durante 6 h aunque el escáner solo usa las de los últimos 10 min; el checkpointer escribió 4,6 GB y autovacuum recorrió `net._http_response` ~35 veces al día. Además dos consultas recorrían tablas enteras por falta de índice (`cuotas_casa` en la comprobación de cuota vieja y `kambi_pedidos` en `kambi_encolar`).
+
+Cambios (migración `20261127220000_futbol_menos_disk_io.sql`): índices `cuotas_casa (casa, evento_id, ts)` y `kambi_pedidos (casa, evento_id, ts)`; `kambi_encolar` borra las respuestas crudas de sus propios pedidos con más de `kambi_respuestas_min` (15, mínimo 11; 0 = no borrar); la limpieza diaria también borra el historial de cron de los jobs `futbol-*` de más de 3 días. No cambia qué se le pide a Kambi ni cada cuánto.
